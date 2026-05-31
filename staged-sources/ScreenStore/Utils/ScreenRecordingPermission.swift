@@ -13,10 +13,6 @@ final class ScreenRecordingPermission: ObservableObject {
         refresh()
     }
 
-    deinit {
-        pollingTask?.cancel()
-    }
-
     /// 現在の許諾状況を即時に確認して isGranted を更新する。
     func refresh() {
         isGranted = CGPreflightScreenCaptureAccess()

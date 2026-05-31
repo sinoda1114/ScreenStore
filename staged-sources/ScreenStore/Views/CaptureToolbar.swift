@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CaptureToolbar: View {
     @EnvironmentObject private var historyStore: HistoryStore
+    @EnvironmentObject private var permission: ScreenRecordingPermission
     @State private var isCapturing = false
     @State private var lastError: String?
     @State private var showError = false
@@ -42,8 +43,28 @@ struct CaptureToolbar: View {
 
     @MainActor
     private func runFullScreenCapture() async {
-        // Step 3 で CaptureService と結線して実装する
-        lastError = "全画面キャプチャはまだ実装されていません (Step 3)。"
-        showError = true
+        isCapturing = true
+        defer { isCapturing = false }
+
+        if !permission.isGranted {
+            permission.refresh()
+            if !permission.isGranted {
+                let granted = permission.requestIfNeeded()
+                if !granted {
+                    permission.openSystemSettings()
+                    lastError = (CaptureError.permissionDenied as LocalizedError).errorDescription
+                    showError = true
+                    return
+                }
+            }
+        }
+
+        do {
+            let item = try await CaptureService.shared.captureFullScreen()
+            historyStore.prepend(item)
+        } catch {
+            lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            showError = true
+        }
     }
 }
