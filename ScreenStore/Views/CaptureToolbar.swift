@@ -30,12 +30,9 @@ struct CaptureToolbar: View {
                 windowMenuContents
             } label: {
                 Label("ウィンドウ", systemImage: "macwindow")
-            } primaryAction: {
-                Task { await refreshWindows() }
             }
-            .help("ウィンドウ指定キャプチャ (一覧を開く前にクリックして更新)")
+            .help("ウィンドウ指定キャプチャ")
             .disabled(isCapturing)
-            .keyboardShortcut("3", modifiers: [.command, .shift])
 
             Button {
                 Task { await runRegionCapture() }
@@ -58,31 +55,34 @@ struct CaptureToolbar: View {
 
     @ViewBuilder
     private var windowMenuContents: some View {
-        if isRefreshingWindows && availableWindows.isEmpty {
-            Text("一覧を取得中…")
-        } else if let err = windowFetchError {
-            Text("一覧の取得に失敗: \(err)")
-        } else if availableWindows.isEmpty {
-            Text("対象ウィンドウなし (他のアプリのウィンドウを前面に出してから「一覧を更新」)")
-        } else {
-            ForEach(groupedWindows, id: \.appName) { group in
-                Section(group.appName) {
-                    ForEach(group.windows) { window in
-                        Button {
-                            Task { await runWindowCapture(window) }
-                        } label: {
-                            Text(window.title)
+        Group {
+            if isRefreshingWindows && availableWindows.isEmpty {
+                Text("一覧を取得中…")
+            } else if let err = windowFetchError {
+                Text("一覧の取得に失敗: \(err)")
+            } else if availableWindows.isEmpty {
+                Text("対象ウィンドウなし")
+            } else {
+                ForEach(groupedWindows, id: \.appName) { group in
+                    Section(group.appName) {
+                        ForEach(group.windows) { window in
+                            Button {
+                                Task { await runWindowCapture(window) }
+                            } label: {
+                                Text(window.title)
+                            }
                         }
                     }
                 }
             }
+            Divider()
+            Button {
+                Task { await refreshWindows() }
+            } label: {
+                Label("一覧を更新", systemImage: "arrow.clockwise")
+            }
         }
-        Divider()
-        Button {
-            Task { await refreshWindows() }
-        } label: {
-            Label("一覧を更新", systemImage: "arrow.clockwise")
-        }
+        .task { await refreshWindows() }
     }
 
     private var groupedWindows: [(appName: String, windows: [WindowDescriptor])] {
