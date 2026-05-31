@@ -10,4 +10,5 @@ struct ContentView: View {
     ContentView()
         .environmentObject(HistoryStore())
         .environmentObject(ScreenRecordingPermission())
+        .environmentObject(ShortcutSettings())
 }

@@ -7,6 +7,8 @@ private let toolbarLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "
 struct CaptureToolbar: View {
     @EnvironmentObject private var historyStore: HistoryStore
     @EnvironmentObject private var permission: ScreenRecordingPermission
+    @EnvironmentObject private var shortcuts: ShortcutSettings
+    @Environment(\.openSettings) private var openSettings
     @State private var isCapturing = false
     @State private var lastError: String?
     @State private var showError = false
@@ -18,32 +20,50 @@ struct CaptureToolbar: View {
             } label: {
                 Label("全画面", systemImage: "rectangle.dashed")
             }
-            .help("全画面をキャプチャ")
+            .help("全画面をキャプチャ (\(shortcuts.fullScreen.displayString))")
             .disabled(isCapturing)
-            .keyboardShortcut("2", modifiers: [.command, .shift])
+            .keyboardShortcut(shortcuts.fullScreen.keyEquivalent,
+                              modifiers: shortcuts.fullScreen.swiftUIEventModifiers)
 
             Button {
                 Task { await runWindowCapture() }
             } label: {
                 Label("ウィンドウ", systemImage: "macwindow")
             }
-            .help("ウィンドウ指定キャプチャ (画面上のウィンドウをクリックで選択 / ESC でキャンセル)")
+            .help("ウィンドウ指定キャプチャ (\(shortcuts.window.displayString))")
             .disabled(isCapturing)
-            .keyboardShortcut("3", modifiers: [.command, .shift])
+            .keyboardShortcut(shortcuts.window.keyEquivalent,
+                              modifiers: shortcuts.window.swiftUIEventModifiers)
 
             Button {
                 Task { await runRegionCapture() }
             } label: {
                 Label("範囲", systemImage: "selection.pin.in.out")
             }
-            .help("自由範囲キャプチャ (ドラッグで矩形選択 / ESC でキャンセル)")
+            .help("自由範囲キャプチャ (\(shortcuts.region.displayString))")
             .disabled(isCapturing)
-            .keyboardShortcut("4", modifiers: [.command, .shift])
+            .keyboardShortcut(shortcuts.region.keyEquivalent,
+                              modifiers: shortcuts.region.swiftUIEventModifiers)
+
+            Button {
+                openSettingsWindow()
+            } label: {
+                Label("設定", systemImage: "gearshape")
+            }
+            .help("設定 (⌘,)")
         }
         .alert("キャプチャに失敗しました", isPresented: $showError, presenting: lastError) { _ in
             Button("OK", role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    /// 設定ウィンドウを開き、既存があれば最前面に持ってくる。
+    private func openSettingsWindow() {
+        openSettings()
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 

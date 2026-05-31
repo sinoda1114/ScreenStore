@@ -545,3 +545,96 @@ struct RegionMathTests {
         #expect(clamped.size.height == 0)
     }
 }
+
+// MARK: - ShortcutSettings (Sprint 3)
+
+@Suite("ShortcutSettings", .serialized)
+@MainActor
+struct ShortcutSettingsTests {
+
+    /// テスト専用の UserDefaults を 1 個作る (suite 名がぶつからないよう UUID 付き)。
+    private func makeIsolatedDefaults() -> UserDefaults {
+        let suite = "ScreenStoreTests-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        return d
+    }
+
+    @Test("デフォルト値: 全画面=⌘⇧2 / ウィンドウ=⌘⇧3 / 範囲=⌘⇧4")
+    func defaultsMatchSpec() {
+        let d = makeIsolatedDefaults()
+        let s = ShortcutSettings(defaults: d)
+        #expect(s.fullScreen.keyCharacter == "2")
+        #expect(s.fullScreen.nsModifierFlags == [.command, .shift])
+        #expect(s.window.keyCharacter == "3")
+        #expect(s.window.nsModifierFlags == [.command, .shift])
+        #expect(s.region.keyCharacter == "4")
+        #expect(s.region.nsModifierFlags == [.command, .shift])
+    }
+
+    @Test("update → 再 init で同じ値が読み戻せる (UserDefaults 経由の往復)")
+    func roundTripsThroughUserDefaults() {
+        let d = makeIsolatedDefaults()
+        let s1 = ShortcutSettings(defaults: d)
+        let custom = KeyboardShortcutSpec(
+            keyCharacter: "p",
+            modifiers: [.command, .option, .control]
+        )
+        s1.update(.fullScreen, spec: custom)
+
+        let s2 = ShortcutSettings(defaults: d)
+        #expect(s2.fullScreen == custom)
+        // 他のキーは触っていないのでデフォルト維持
+        #expect(s2.window == ShortcutSettings.Key.window.defaultSpec)
+    }
+
+    @Test("reset で UserDefaults の値もデフォルトに戻る")
+    func resetRestoresDefault() {
+        let d = makeIsolatedDefaults()
+        let s = ShortcutSettings(defaults: d)
+        s.update(.region, spec: KeyboardShortcutSpec(keyCharacter: "x", modifiers: [.command]))
+        #expect(s.region.keyCharacter == "x")
+        s.reset(.region)
+        #expect(s.region == ShortcutSettings.Key.region.defaultSpec)
+
+        let s2 = ShortcutSettings(defaults: d)
+        #expect(s2.region == ShortcutSettings.Key.region.defaultSpec)
+    }
+
+    @Test("displayString: 修飾キーは順番に並ぶ (⌃⌥⇧⌘) + 大文字キー")
+    func displayStringFormat() {
+        let s1 = KeyboardShortcutSpec(keyCharacter: "2", modifiers: [.command, .shift])
+        #expect(s1.displayString == "⇧⌘2")
+        let s2 = KeyboardShortcutSpec(keyCharacter: "a", modifiers: [.command])
+        #expect(s2.displayString == "⌘A")
+        let s3 = KeyboardShortcutSpec(keyCharacter: "x",
+                                      modifiers: [.command, .shift, .option, .control])
+        #expect(s3.displayString == "⌃⌥⇧⌘X")
+    }
+
+    @Test("isValid: modifier ゼロや空文字は false")
+    func isValidEdges() {
+        #expect(KeyboardShortcutSpec(keyCharacter: "a", modifiers: []).isValid == false)
+        #expect(KeyboardShortcutSpec(keyCharacter: "", modifiers: [.command]).isValid == false)
+        #expect(KeyboardShortcutSpec(keyCharacter: "a", modifiers: [.command]).isValid == true)
+    }
+
+    @Test("壊れた UserDefaults エントリはデフォルトにフォールバック")
+    func corruptedDefaultsFallback() {
+        let d = makeIsolatedDefaults()
+        d.set(Data([0x00, 0xff]), forKey: ShortcutSettings.Key.fullScreen.rawValue)
+        let s = ShortcutSettings(defaults: d)
+        #expect(s.fullScreen == ShortcutSettings.Key.fullScreen.defaultSpec)
+    }
+
+    @Test("swiftUIEventModifiers: NSEvent → SwiftUI のマッピング")
+    func swiftUIEventModifiersMapping() {
+        let s = KeyboardShortcutSpec(keyCharacter: "a",
+                                     modifiers: [.command, .shift, .option, .control])
+        let m = s.swiftUIEventModifiers
+        #expect(m.contains(.command))
+        #expect(m.contains(.shift))
+        #expect(m.contains(.option))
+        #expect(m.contains(.control))
+    }
+}

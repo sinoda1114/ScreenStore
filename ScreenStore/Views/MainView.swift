@@ -62,5 +62,6 @@ struct MainView: View {
     MainView()
         .environmentObject(HistoryStore())
         .environmentObject(ScreenRecordingPermission())
+        .environmentObject(ShortcutSettings())
         .frame(width: 1100, height: 700)
 }

@@ -9,6 +9,7 @@ private let appLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "app"
 struct ScreenStoreApp: App {
     @StateObject private var historyStore = HistoryStore()
     @StateObject private var permission = ScreenRecordingPermission()
+    @StateObject private var shortcuts = ShortcutSettings()
 
     init() {
         if CommandLine.arguments.contains("--register-tcc") {
@@ -31,6 +32,7 @@ struct ScreenStoreApp: App {
             MainView()
                 .environmentObject(historyStore)
                 .environmentObject(permission)
+                .environmentObject(shortcuts)
                 .frame(minWidth: 920, minHeight: 600)
                 .task {
                     await historyStore.bootstrap()
@@ -41,6 +43,12 @@ struct ScreenStoreApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {}
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(shortcuts)
+                .environmentObject(historyStore)
         }
     }
 
