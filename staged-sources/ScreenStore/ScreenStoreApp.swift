@@ -9,6 +9,9 @@ struct ScreenStoreApp: App {
             MainView()
                 .environmentObject(historyStore)
                 .frame(minWidth: 920, minHeight: 600)
+                .task {
+                    await historyStore.bootstrap()
+                }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
