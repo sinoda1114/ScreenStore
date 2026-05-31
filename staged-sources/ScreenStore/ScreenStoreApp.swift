@@ -20,6 +20,10 @@ struct ScreenStoreApp: App {
         if CommandLine.arguments.contains("--smoke-window") {
             Self.runSmokeWindow()
         }
+        if let regionArgIndex = CommandLine.arguments.firstIndex(of: "--smoke-region"),
+           regionArgIndex + 1 < CommandLine.arguments.count {
+            Self.runSmokeRegion(rawArg: CommandLine.arguments[regionArgIndex + 1])
+        }
     }
 
     var body: some Scene {
@@ -103,6 +107,39 @@ struct ScreenStoreApp: App {
                 appLog.info("smoke-window OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
             } catch {
                 appLog.error("smoke-window FAILED: \(String(describing: error), privacy: .public)")
+            }
+            await MainActor.run { NSApp.terminate(nil) }
+        }
+    }
+
+    /// 起動引数 `--smoke-region <x>,<y>,<w>,<h>` 専用。メインスクリーン上の左下原点 / point の矩形を
+    /// 撮影してログ出力 → 終了する。
+    private static func runSmokeRegion(rawArg: String) {
+        appLog.info("smoke-region starting arg=\(rawArg, privacy: .public)")
+        let parts = rawArg.split(separator: ",").map { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4, let x = parts[0], let y = parts[1], let w = parts[2], let h = parts[3] else {
+            appLog.error("smoke-region: invalid arg, expected x,y,w,h")
+            Task.detached { await MainActor.run { NSApp.terminate(nil) } }
+            return
+        }
+        let rect = CGRect(x: x, y: y, width: w, height: h)
+
+        Task.detached {
+            do {
+                try StorageService.shared.prepare()
+                let (displayID, size, scale): (CGDirectDisplayID, CGSize, CGFloat) = await MainActor.run {
+                    let screen = NSScreen.main ?? NSScreen.screens.first!
+                    return (CaptureService.displayID(for: screen), screen.frame.size, screen.backingScaleFactor)
+                }
+                let item = try await CaptureService.shared.captureRegion(
+                    windowLocalRect: rect,
+                    displayID: displayID,
+                    screenPointSize: size,
+                    backingScale: scale
+                )
+                appLog.info("smoke-region OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
+            } catch {
+                appLog.error("smoke-region FAILED: \(String(describing: error), privacy: .public)")
             }
             await MainActor.run { NSApp.terminate(nil) }
         }

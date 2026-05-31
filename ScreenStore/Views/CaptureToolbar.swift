@@ -38,12 +38,13 @@ struct CaptureToolbar: View {
             .keyboardShortcut("3", modifiers: [.command, .shift])
 
             Button {
-                // 次スプリント: 範囲指定
+                Task { await runRegionCapture() }
             } label: {
                 Label("範囲", systemImage: "selection.pin.in.out")
             }
-            .help("自由範囲キャプチャ (次スプリント実装予定)")
-            .disabled(true)
+            .help("自由範囲キャプチャ (ドラッグで矩形選択 / ESC でキャンセル)")
+            .disabled(isCapturing)
+            .keyboardShortcut("4", modifiers: [.command, .shift])
         }
         .alert("キャプチャに失敗しました", isPresented: $showError, presenting: lastError) { _ in
             Button("OK", role: .cancel) {}
@@ -122,6 +123,38 @@ struct CaptureToolbar: View {
             handle(error: error)
             // ウィンドウが消えていた場合に備えて再取得しておく
             await refreshWindows()
+        }
+    }
+
+    @MainActor
+    private func runRegionCapture() async {
+        isCapturing = true
+        defer { isCapturing = false }
+        guard await ensurePermission() else { return }
+
+        guard let selection = await RegionSelectionController.shared.selectRegion() else {
+            toolbarLog.info("region capture cancelled by user")
+            return
+        }
+
+        // SCK 撮影前に念のため少し待つ (オーバーレイのフェードアウトを確実に画面から消すため)
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        let displayID = CaptureService.displayID(for: selection.screen)
+        let scale = selection.screen.backingScaleFactor
+        let size = selection.screen.frame.size
+
+        do {
+            let item = try await CaptureService.shared.captureRegion(
+                windowLocalRect: selection.rect,
+                displayID: displayID,
+                screenPointSize: size,
+                backingScale: scale
+            )
+            historyStore.prepend(item)
+            toolbarLog.info("captureRegion OK: \(item.fileURL.path, privacy: .public) rect=\(NSStringFromRect(selection.rect), privacy: .public)")
+        } catch {
+            handle(error: error)
         }
     }
 

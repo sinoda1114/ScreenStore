@@ -6,6 +6,8 @@ import AppKit
 enum CaptureError: LocalizedError {
     case noDisplay
     case windowNotFound
+    case emptyRegion
+    case croppingFailed
     case permissionDenied
     case captureFailed(Error)
 
@@ -15,6 +17,10 @@ enum CaptureError: LocalizedError {
             return "利用可能なディスプレイが見つかりませんでした。"
         case .windowNotFound:
             return "対象のウィンドウが既に閉じられているか、共有可能ウィンドウから外れました。一覧を更新してから再度お試しください。"
+        case .emptyRegion:
+            return "選択範囲が空、もしくは画面外です。もう一度ドラッグしてやり直してください。"
+        case .croppingFailed:
+            return "画像の切り抜きに失敗しました。"
         case .permissionDenied:
             return "画面収録の許可がありません。システム設定 > プライバシーとセキュリティ > 画面収録 で ScreenStore を有効にしてください。"
         case .captureFailed(let err):
@@ -156,6 +162,62 @@ final class CaptureService {
             createdAt: Date(),
             pixelSize: CGSize(width: cgImage.width, height: cgImage.height),
             captureMode: .window
+        )
+    }
+
+    // MARK: - Region capture
+
+    /// 指定スクリーン (= displayID) の上で選択された矩形をキャプチャする。
+    ///
+    /// - Parameters:
+    ///   - rect: 透過オーバーレイ NSWindow ローカル座標 (左下原点 / point)。
+    ///           オーバーレイが NSScreen.frame と一致している前提なので、画面ローカル座標と等価。
+    ///   - displayID: 対象 NSScreen の `NSScreenNumber` から得た CGDirectDisplayID
+    ///   - screenPointSize: NSScreen.frame.size (point)
+    ///   - backingScale: NSScreen.backingScaleFactor
+    ///
+    /// 呼び出し側 (RegionSelectionController など) がオーバーレイを必ず orderOut してから呼ぶこと。
+    func captureRegion(
+        windowLocalRect rect: CGRect,
+        displayID: CGDirectDisplayID,
+        screenPointSize: CGSize,
+        backingScale: CGFloat
+    ) async throws -> CaptureItem {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw CaptureError.permissionDenied
+        }
+        guard rect.width > 0, rect.height > 0 else {
+            throw CaptureError.emptyRegion
+        }
+
+        let display = try await fetchDisplay(matching: displayID)
+        let fullImage = try await captureImage(of: display)
+
+        let pixelRect = RegionMath.pixelCropRect(
+            windowLocalRect: rect,
+            windowSize: screenPointSize,
+            backingScale: backingScale
+        )
+        let clamped = RegionMath.clamp(
+            rect: pixelRect,
+            to: CGSize(width: fullImage.width, height: fullImage.height)
+        )
+        guard clamped.width >= 1, clamped.height >= 1 else {
+            throw CaptureError.emptyRegion
+        }
+
+        guard let cropped = fullImage.cropping(to: clamped) else {
+            throw CaptureError.croppingFailed
+        }
+
+        let url = StorageService.shared.nextImageURL()
+        try StorageService.shared.writePNG(cropped, to: url)
+
+        return CaptureItem(
+            fileURL: url,
+            createdAt: Date(),
+            pixelSize: CGSize(width: cropped.width, height: cropped.height),
+            captureMode: .region
         )
     }
 
