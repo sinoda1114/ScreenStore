@@ -42,7 +42,32 @@ final class RegionSelectionController {
         regionLog.info("opening overlays for \(NSScreen.screens.count, privacy: .public) screens")
         overlayWindows.removeAll()
         for screen in NSScreen.screens {
-            let win = RegionOverlayWindow(targetScreen: screen, controller: self)
+            let win = RegionOverlayWindow(
+                contentRect: screen.frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.hasShadow = false
+            win.level = .screenSaver
+            win.ignoresMouseEvents = false
+            win.acceptsMouseMovedEvents = true
+            win.isMovableByWindowBackground = false
+            win.isReleasedWhenClosed = false
+            win.collectionBehavior = [
+                .canJoinAllSpaces,
+                .stationary,
+                .ignoresCycle,
+                .fullScreenAuxiliary
+            ]
+            win.setFrame(screen.frame, display: true)
+
+            let view = RegionOverlayView(targetScreen: screen, controller: self)
+            win.contentView = view
+            win.initialFirstResponder = view
+            win.makeFirstResponder(view)
             overlayWindows.append(win)
         }
         for win in overlayWindows {
@@ -83,42 +108,10 @@ final class RegionSelectionController {
 
 // MARK: - Overlay window
 
+/// `.borderless` でも keyDown / mouse イベントを受け付けるための最小オーバーライド。
+/// stored property を持たないので NSWindow の指定 init をそのまま継承でき、
+/// AppKit が内部的に 4 引数 init を self 呼びしても SIGTRAP しない。
 final class RegionOverlayWindow: NSWindow {
-    let targetScreen: NSScreen
-    weak var controller: RegionSelectionController?
-
-    init(targetScreen: NSScreen, controller: RegionSelectionController) {
-        self.targetScreen = targetScreen
-        self.controller = controller
-        super.init(
-            contentRect: targetScreen.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false,
-            screen: targetScreen
-        )
-        self.isOpaque = false
-        self.backgroundColor = .clear
-        self.hasShadow = false
-        self.level = .screenSaver
-        self.ignoresMouseEvents = false
-        self.acceptsMouseMovedEvents = true
-        self.isMovableByWindowBackground = false
-        self.isReleasedWhenClosed = false
-        self.collectionBehavior = [
-            .canJoinAllSpaces,
-            .stationary,
-            .ignoresCycle,
-            .fullScreenAuxiliary
-        ]
-        self.setFrame(targetScreen.frame, display: true)
-
-        let view = RegionOverlayView(targetScreen: targetScreen, controller: controller)
-        self.contentView = view
-        self.initialFirstResponder = view
-        self.makeFirstResponder(view)
-    }
-
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override var acceptsFirstResponder: Bool { true }
