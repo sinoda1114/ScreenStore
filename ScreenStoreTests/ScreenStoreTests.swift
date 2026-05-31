@@ -3,6 +3,7 @@ import Foundation
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+import AppKit
 @testable import ScreenStore
 
 // MARK: - Helpers
@@ -340,6 +341,61 @@ struct CaptureServiceIntegrationTests {
         #expect(size?.height == item.pixelSize.height)
         print("=== Captured: \(item.fileURL.path), \(Int(item.pixelSize.width))x\(Int(item.pixelSize.height)) ===")
     }
+
+    @Test("listCapturableWindows は権限の有無で挙動が分かれる")
+    func listCapturableWindowsBehavior() async throws {
+        let granted = CGPreflightScreenCaptureAccess()
+        if !granted {
+            do {
+                _ = try await CaptureService.shared.listCapturableWindows()
+                Issue.record("権限なしのはずなのに listCapturableWindows が成功した")
+            } catch CaptureError.permissionDenied {
+                // 期待通り
+            } catch {
+                Issue.record("予期しないエラー: \(error)")
+            }
+            return
+        }
+
+        let windows = try await CaptureService.shared.listCapturableWindows()
+        // ScreenStore 自身は除外されているはず
+        #expect(windows.allSatisfy { $0.bundleIdentifier != "com.sinoda.ScreenStore" })
+        // 各エントリの整合性
+        #expect(windows.allSatisfy { !$0.title.isEmpty })
+        #expect(windows.allSatisfy { !$0.appName.isEmpty })
+        print("=== Windows visible to SCK: \(windows.count) ===")
+    }
+
+    @Test("captureRegion: scale=1 で windowLocalRect 通りに crop される (権限ありのみ)")
+    func captureRegionMatchesPixelMath() async throws {
+        let granted = CGPreflightScreenCaptureAccess()
+        if !granted { return }
+
+        let (displayID, size, scale) = await MainActor.run { () -> (CGDirectDisplayID, CGSize, CGFloat) in
+            guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+                return (CGMainDisplayID(), .zero, 1)
+            }
+            return (CaptureService.displayID(for: screen), screen.frame.size, screen.backingScaleFactor)
+        }
+        guard size.width >= 200, size.height >= 200 else { return }
+
+        // 画面の中央付近 100x80 ポイントを切り抜く
+        let rect = CGRect(x: 50, y: 50, width: 100, height: 80)
+        let item = try await CaptureService.shared.captureRegion(
+            windowLocalRect: rect,
+            displayID: displayID,
+            screenPointSize: size,
+            backingScale: scale
+        )
+        defer { try? FileManager.default.removeItem(at: item.fileURL) }
+
+        #expect(FileManager.default.fileExists(atPath: item.fileURL.path))
+        #expect(item.captureMode == .region)
+        // pixel サイズは int(scale * pt) になる
+        #expect(item.pixelSize.width == CGFloat(Int(rect.width * scale)))
+        #expect(item.pixelSize.height == CGFloat(Int(rect.height * scale)))
+        print("=== Region captured: \(item.fileURL.path), \(Int(item.pixelSize.width))x\(Int(item.pixelSize.height)) ===")
+    }
 }
 
 // MARK: - ScreenRecordingPermission (権限を要らない範囲のみ)
@@ -365,5 +421,127 @@ struct ScreenRecordingPermissionTests {
         let after = permission.isGranted
         // refresh で値が変わらないこと自体は普通
         #expect(before == after)
+    }
+}
+
+// MARK: - RegionMath (範囲指定キャプチャの座標変換)
+
+@Suite("RegionMath")
+struct RegionMathTests {
+
+    @Test("normalizedRect は両端点から左下原点・正のサイズの矩形を返す")
+    func normalizedRectFromPoints() {
+        // 左下 → 右上 のドラッグ
+        let a = CGPoint(x: 10, y: 20)
+        let b = CGPoint(x: 110, y: 220)
+        let r = RegionMath.normalizedRect(from: a, to: b)
+        #expect(r.origin.x == 10)
+        #expect(r.origin.y == 20)
+        #expect(r.size.width == 100)
+        #expect(r.size.height == 200)
+
+        // 右上 → 左下 (逆ドラッグ) でも同じ結果
+        let r2 = RegionMath.normalizedRect(from: b, to: a)
+        #expect(r2 == r)
+    }
+
+    @Test("normalizedRect は同じ点の場合 size == .zero になる")
+    func normalizedRectSamePoint() {
+        let p = CGPoint(x: 50, y: 50)
+        let r = RegionMath.normalizedRect(from: p, to: p)
+        #expect(r.size.width == 0)
+        #expect(r.size.height == 0)
+    }
+
+    @Test("pixelCropRect: scale=1 で Y 軸だけ反転する")
+    func pixelCropRectScaleOne() {
+        // ウィンドウサイズ: 1000x800 (point), 矩形: 左下原点 (100, 50) で 200x300
+        // → 上原点座標では top = 800 - (50 + 300) = 450, x はそのまま
+        let result = RegionMath.pixelCropRect(
+            windowLocalRect: CGRect(x: 100, y: 50, width: 200, height: 300),
+            windowSize: CGSize(width: 1000, height: 800),
+            backingScale: 1.0
+        )
+        #expect(result == CGRect(x: 100, y: 450, width: 200, height: 300))
+    }
+
+    @Test("pixelCropRect: scale=2 (Retina) でピクセルが 2 倍になる")
+    func pixelCropRectScaleTwo() {
+        let result = RegionMath.pixelCropRect(
+            windowLocalRect: CGRect(x: 100, y: 50, width: 200, height: 300),
+            windowSize: CGSize(width: 1000, height: 800),
+            backingScale: 2.0
+        )
+        // x = 100*2 = 200, y_top = (800-50-300)*2 = 450*2 = 900
+        // w = 400, h = 600
+        #expect(result == CGRect(x: 200, y: 900, width: 400, height: 600))
+    }
+
+    @Test("pixelCropRect: 左下隅 (0,0) start・小矩形は左上原点で 1px 高さの底辺になる")
+    func pixelCropRectBottomLeftCorner() {
+        let result = RegionMath.pixelCropRect(
+            windowLocalRect: CGRect(x: 0, y: 0, width: 10, height: 10),
+            windowSize: CGSize(width: 100, height: 100),
+            backingScale: 1.0
+        )
+        // y_top = 100 - (0 + 10) = 90
+        #expect(result == CGRect(x: 0, y: 90, width: 10, height: 10))
+    }
+
+    @Test("pixelCropRect: 左上隅 (= y=windowHeight-h) は y_top=0 になる")
+    func pixelCropRectTopLeftCorner() {
+        let result = RegionMath.pixelCropRect(
+            windowLocalRect: CGRect(x: 0, y: 90, width: 10, height: 10),
+            windowSize: CGSize(width: 100, height: 100),
+            backingScale: 1.0
+        )
+        #expect(result == CGRect(x: 0, y: 0, width: 10, height: 10))
+    }
+
+    @Test("pixelCropRect は integral 化されている (端数入力でも整数)")
+    func pixelCropRectIsIntegral() {
+        let result = RegionMath.pixelCropRect(
+            windowLocalRect: CGRect(x: 10.4, y: 20.7, width: 100.5, height: 50.1),
+            windowSize: CGSize(width: 1000, height: 800),
+            backingScale: 2.0
+        )
+        // integral 化されているので浮動小数の小数部はゼロ
+        #expect(result.origin.x.truncatingRemainder(dividingBy: 1) == 0)
+        #expect(result.origin.y.truncatingRemainder(dividingBy: 1) == 0)
+        #expect(result.size.width.truncatingRemainder(dividingBy: 1) == 0)
+        #expect(result.size.height.truncatingRemainder(dividingBy: 1) == 0)
+    }
+
+    @Test("clamp: 画像内に完全に収まる場合は元の矩形を返す")
+    func clampInsideReturnsSelf() {
+        let r = CGRect(x: 10, y: 10, width: 50, height: 50)
+        let clamped = RegionMath.clamp(rect: r, to: CGSize(width: 100, height: 100))
+        #expect(clamped == r)
+    }
+
+    @Test("clamp: 右下にはみ出した分は縮められる")
+    func clampOverflowingShrinks() {
+        let r = CGRect(x: 80, y: 80, width: 50, height: 50)
+        let clamped = RegionMath.clamp(rect: r, to: CGSize(width: 100, height: 100))
+        #expect(clamped == CGRect(x: 80, y: 80, width: 20, height: 20))
+    }
+
+    @Test("clamp: 負の origin は 0 に、size はそれに合わせて縮む")
+    func clampNegativeOrigin() {
+        let r = CGRect(x: -10, y: -20, width: 50, height: 50)
+        let clamped = RegionMath.clamp(rect: r, to: CGSize(width: 100, height: 100))
+        #expect(clamped.origin.x == 0)
+        #expect(clamped.origin.y == 0)
+        // 元 width=50 だが maxW = imageW - x(=0) = 100 なので縮まずそのまま 50
+        #expect(clamped.size.width == 50)
+        #expect(clamped.size.height == 50)
+    }
+
+    @Test("clamp: 完全に画像外なら size は 0 になる")
+    func clampFullyOutsideReturnsZero() {
+        let r = CGRect(x: 200, y: 200, width: 50, height: 50)
+        let clamped = RegionMath.clamp(rect: r, to: CGSize(width: 100, height: 100))
+        #expect(clamped.size.width == 0)
+        #expect(clamped.size.height == 0)
     }
 }
