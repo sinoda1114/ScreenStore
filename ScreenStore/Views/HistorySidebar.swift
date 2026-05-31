@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import os.log
 
 private let sidebarLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "sidebar")
@@ -120,6 +121,8 @@ private struct HistoryRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onDrag { dragProvider(for: item) }
     }
 
     private var formattedDate: String {
@@ -128,6 +131,23 @@ private struct HistoryRow: View {
         f.dateFormat = "M/d HH:mm:ss"
         return f.string(from: item.createdAt)
     }
+}
+
+/// 行を外部アプリへドラッグするための NSItemProvider を生成する。
+/// PNG のファイル URL 表現を public.png として登録することで、
+/// Finder / Chrome / Cursor / メーラーいずれでも素直に「画像ファイル」として受け取れる。
+private func dragProvider(for item: CaptureItem) -> NSItemProvider {
+    let provider = NSItemProvider()
+    provider.suggestedName = item.fileURL.deletingPathExtension().lastPathComponent
+    provider.registerFileRepresentation(
+        forTypeIdentifier: UTType.png.identifier,
+        fileOptions: [],
+        visibility: .all
+    ) { completion in
+        completion(item.fileURL, true, nil)
+        return nil
+    }
+    return provider
 }
 
 private struct ThumbnailView: View {
