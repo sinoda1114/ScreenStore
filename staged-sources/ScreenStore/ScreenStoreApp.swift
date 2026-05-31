@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ScreenCaptureKit
 import os.log
 
 private let appLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "app")
@@ -36,15 +37,25 @@ struct ScreenStoreApp: App {
         }
     }
 
-    /// 起動引数 `--register-tcc` 専用。CGRequestScreenCaptureAccess() を呼んで
-    /// TCC のリストに ScreenStore を登録し、ログを残して終了する。
+    /// 起動引数 `--register-tcc` 専用。
+    /// macOS 15 では CGRequestScreenCaptureAccess() に加えて
+    /// SCShareableContent.current を実際に呼ぶことで TCC db に
+    /// ScreenStore のエントリが確実に作成される。
     private static func registerWithTCC() {
         appLog.info("register-tcc starting")
         let pre = CGPreflightScreenCaptureAccess()
         let req = CGRequestScreenCaptureAccess()
         appLog.info("register-tcc preflight=\(pre, privacy: .public) request=\(req, privacy: .public)")
         Task.detached {
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            do {
+                let content = try await SCShareableContent.current
+                appLog.info("register-tcc SCShareableContent OK: displays=\(content.displays.count, privacy: .public) windows=\(content.windows.count, privacy: .public)")
+            } catch {
+                appLog.info("register-tcc SCShareableContent error (これが TCC ダイアログ誘発): \(String(describing: error), privacy: .public)")
+            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            let postPre = CGPreflightScreenCaptureAccess()
+            appLog.info("register-tcc post-sleep preflight=\(postPre, privacy: .public)")
             await MainActor.run { NSApp.terminate(nil) }
         }
     }
