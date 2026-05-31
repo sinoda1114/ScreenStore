@@ -27,12 +27,20 @@ final class StorageService {
     let imagesDirectory: URL
     let videosDirectory: URL
 
-    private init() {
-        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures")
-        self.baseDirectory = pictures.appendingPathComponent("ScreenStore", isDirectory: true)
+    convenience init() {
+        self.init(baseDirectory: Self.defaultBaseDirectory())
+    }
+
+    init(baseDirectory: URL) {
+        self.baseDirectory = baseDirectory
         self.imagesDirectory = baseDirectory.appendingPathComponent("images", isDirectory: true)
         self.videosDirectory = baseDirectory.appendingPathComponent("videos", isDirectory: true)
+    }
+
+    static func defaultBaseDirectory() -> URL {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures")
+        return pictures.appendingPathComponent("ScreenStore", isDirectory: true)
     }
 
     func prepare() throws {

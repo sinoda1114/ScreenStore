@@ -2,6 +2,9 @@ import Foundation
 import AppKit
 import CoreGraphics
 import SwiftUI
+import os.log
+
+private let permLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "permission")
 
 @MainActor
 final class ScreenRecordingPermission: ObservableObject {
@@ -11,11 +14,14 @@ final class ScreenRecordingPermission: ObservableObject {
 
     init() {
         refresh()
+        permLog.info("ScreenRecordingPermission init, isGranted=\(self.isGranted, privacy: .public)")
     }
 
     /// 現在の許諾状況を即時に確認して isGranted を更新する。
     func refresh() {
-        isGranted = CGPreflightScreenCaptureAccess()
+        let value = CGPreflightScreenCaptureAccess()
+        isGranted = value
+        permLog.info("refresh -> isGranted=\(value, privacy: .public)")
     }
 
     /// 初回キャプチャなどで一度だけ TCC ダイアログを出すために使う。
@@ -37,13 +43,16 @@ final class ScreenRecordingPermission: ObservableObject {
     /// 2. システム設定の「画面収録」ペインを開く
     /// 3. ユーザーが許諾するまでバックグラウンドでポーリング
     func requestAccessAndOpenSettings() {
+        permLog.info("requestAccessAndOpenSettings called")
         if CGPreflightScreenCaptureAccess() {
+            permLog.info("preflight true -> nothing to do")
             isGranted = true
             return
         }
         // CGRequestScreenCaptureAccess() を呼ぶと TCC に登録され、
         // 初回ならシステムダイアログが自動で出る (返値は即時)。
-        _ = CGRequestScreenCaptureAccess()
+        let req = CGRequestScreenCaptureAccess()
+        permLog.info("CGRequestScreenCaptureAccess returned \(req, privacy: .public)")
         openSystemSettings()
     }
 
