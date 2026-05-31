@@ -17,6 +17,9 @@ struct ScreenStoreApp: App {
         if CommandLine.arguments.contains("--smoke-capture") {
             Self.runSmokeCapture()
         }
+        if CommandLine.arguments.contains("--smoke-window") {
+            Self.runSmokeWindow()
+        }
     }
 
     var body: some Scene {
@@ -78,6 +81,30 @@ struct ScreenStoreApp: App {
             await MainActor.run {
                 NSApp.terminate(nil)
             }
+        }
+    }
+
+    /// 起動引数 `--smoke-window` 専用。共有可能ウィンドウ一覧から最初の他アプリウィンドウを選び、
+    /// 撮影してログ出力 → 終了する。GUI 操作なしで end-to-end 確認するためのデバッグ補助。
+    private static func runSmokeWindow() {
+        appLog.info("smoke-window starting")
+        Task.detached {
+            do {
+                try StorageService.shared.prepare()
+                let windows = try await CaptureService.shared.listCapturableWindows()
+                appLog.info("smoke-window candidates=\(windows.count, privacy: .public)")
+                guard let target = windows.first else {
+                    appLog.error("smoke-window: no candidate windows")
+                    await MainActor.run { NSApp.terminate(nil) }
+                    return
+                }
+                appLog.info("smoke-window picking: app=\(target.appName, privacy: .public) title=\(target.title, privacy: .public) id=\(target.id, privacy: .public)")
+                let item = try await CaptureService.shared.captureWindow(id: target.id)
+                appLog.info("smoke-window OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
+            } catch {
+                appLog.error("smoke-window FAILED: \(String(describing: error), privacy: .public)")
+            }
+            await MainActor.run { NSApp.terminate(nil) }
         }
     }
 }

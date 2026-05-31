@@ -5,6 +5,7 @@ import AppKit
 
 enum CaptureError: LocalizedError {
     case noDisplay
+    case windowNotFound
     case permissionDenied
     case captureFailed(Error)
 
@@ -12,6 +13,8 @@ enum CaptureError: LocalizedError {
         switch self {
         case .noDisplay:
             return "利用可能なディスプレイが見つかりませんでした。"
+        case .windowNotFound:
+            return "対象のウィンドウが既に閉じられているか、共有可能ウィンドウから外れました。一覧を更新してから再度お試しください。"
         case .permissionDenied:
             return "画面収録の許可がありません。システム設定 > プライバシーとセキュリティ > 画面収録 で ScreenStore を有効にしてください。"
         case .captureFailed(let err):
@@ -20,10 +23,24 @@ enum CaptureError: LocalizedError {
     }
 }
 
+/// SwiftUI 側で表示するために SCWindow から必要なフィールドだけ抜いた Sendable な値型。
+struct WindowDescriptor: Identifiable, Sendable, Hashable {
+    let id: CGWindowID
+    let title: String
+    let appName: String
+    let bundleIdentifier: String?
+    let frame: CGRect
+}
+
 final class CaptureService {
     static let shared = CaptureService()
 
+    /// 自前で除外したい bundle ID (= ScreenStore 自身)。
+    private static let ownBundleIdentifier = "com.sinoda.ScreenStore"
+
     private init() {}
+
+    // MARK: - Full screen
 
     /// メインディスプレイの全画面を PNG として保存し、CaptureItem を返す。
     /// アプリ自身のウィンドウは一時的に隠して写り込みを避ける。
@@ -66,12 +83,94 @@ final class CaptureService {
         )
     }
 
+    // MARK: - Window picker
+
+    /// 共有可能ウィンドウ一覧を取得し、UI 表示用の WindowDescriptor 配列を返す。
+    /// ScreenStore 自身のウィンドウ・layer != 0・画面外・タイトル空は除外する。
+    func listCapturableWindows() async throws -> [WindowDescriptor] {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw CaptureError.permissionDenied
+        }
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(
+                true,
+                onScreenWindowsOnly: true
+            )
+        } catch {
+            throw CaptureError.captureFailed(error)
+        }
+
+        return content.windows.compactMap { window -> WindowDescriptor? in
+            guard window.windowLayer == 0 else { return nil }
+            guard window.isOnScreen else { return nil }
+            guard let title = window.title, !title.isEmpty else { return nil }
+            let bundleID = window.owningApplication?.bundleIdentifier
+            if bundleID == Self.ownBundleIdentifier { return nil }
+            let appName = window.owningApplication?.applicationName ?? "(不明なアプリ)"
+            return WindowDescriptor(
+                id: window.windowID,
+                title: title,
+                appName: appName,
+                bundleIdentifier: bundleID,
+                frame: window.frame
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.appName != rhs.appName { return lhs.appName < rhs.appName }
+            return lhs.title < rhs.title
+        }
+    }
+
+    // MARK: - Window capture
+
+    /// 指定 windowID のウィンドウだけを SCK でキャプチャする。
+    /// SCContentFilter(desktopIndependentWindow:) を使うので、ウィンドウが画面上で
+    /// 他に隠されていても直接コンテンツを取得できる (ScreenStore のウィンドウを隠す必要はない)。
+    func captureWindow(id windowID: CGWindowID) async throws -> CaptureItem {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw CaptureError.permissionDenied
+        }
+
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(
+                true,
+                onScreenWindowsOnly: true
+            )
+        } catch {
+            throw CaptureError.captureFailed(error)
+        }
+
+        guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
+            throw CaptureError.windowNotFound
+        }
+
+        let cgImage = try await captureImage(of: window)
+
+        let url = StorageService.shared.nextImageURL()
+        try StorageService.shared.writePNG(cgImage, to: url)
+
+        return CaptureItem(
+            fileURL: url,
+            createdAt: Date(),
+            pixelSize: CGSize(width: cgImage.width, height: cgImage.height),
+            captureMode: .window
+        )
+    }
+
+    // MARK: - Internal helpers
+
     @MainActor
     private func hideOwnWindows() {
         NSApp.hide(nil)
     }
 
     private func fetchMainDisplay() async throws -> SCDisplay {
+        try await fetchDisplay(matching: CGMainDisplayID())
+    }
+
+    private func fetchDisplay(matching displayID: CGDirectDisplayID?) async throws -> SCDisplay {
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(
@@ -86,8 +185,11 @@ final class CaptureService {
             throw CaptureError.noDisplay
         }
 
-        let mainID = CGMainDisplayID()
-        if let main = content.displays.first(where: { $0.displayID == mainID }) {
+        if let displayID,
+           let match = content.displays.first(where: { $0.displayID == displayID }) {
+            return match
+        }
+        if let main = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) {
             return main
         }
         if let first = content.displays.first {
@@ -121,6 +223,35 @@ final class CaptureService {
         }
     }
 
+    /// SCWindow 用。SCContentFilter(desktopIndependentWindow:) が提供する
+    /// `pointPixelScale` と `contentRect` を使って Retina 解像度のままキャプチャする。
+    private func captureImage(of window: SCWindow) async throws -> CGImage {
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+
+        let scale = CGFloat(filter.pointPixelScale)
+        let widthPts = filter.contentRect.width
+        let heightPts = filter.contentRect.height
+        let pixelWidth = max(1, Int((widthPts * scale).rounded()))
+        let pixelHeight = max(1, Int((heightPts * scale).rounded()))
+
+        let config = SCStreamConfiguration()
+        config.width = pixelWidth
+        config.height = pixelHeight
+        config.scalesToFit = false
+        config.showsCursor = false
+        config.capturesAudio = false
+        config.ignoreShadowsSingleWindow = true
+
+        do {
+            return try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+        } catch {
+            throw CaptureError.captureFailed(error)
+        }
+    }
+
     @MainActor
     private func scaleFactor(for displayID: CGDirectDisplayID) -> CGFloat {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
@@ -130,5 +261,15 @@ final class CaptureService {
             return screen.backingScaleFactor
         }
         return NSScreen.main?.backingScaleFactor ?? 2.0
+    }
+
+    /// NSScreen → CGDirectDisplayID。`NSScreenNumber` がデバイス記述から取れるはず。
+    @MainActor
+    static func displayID(for screen: NSScreen) -> CGDirectDisplayID {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        if let number = screen.deviceDescription[key] as? NSNumber {
+            return CGDirectDisplayID(number.uint32Value)
+        }
+        return CGMainDisplayID()
     }
 }
