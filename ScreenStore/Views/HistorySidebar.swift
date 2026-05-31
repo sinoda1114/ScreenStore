@@ -1,9 +1,15 @@
 import SwiftUI
 import AppKit
+import os.log
+
+private let sidebarLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "sidebar")
 
 struct HistorySidebar: View {
     @EnvironmentObject private var historyStore: HistoryStore
     @Binding var selectedItemID: CaptureItem.ID?
+
+    @State private var pasteErrorMessage: String?
+    @State private var showPasteError = false
 
     var body: some View {
         Group {
@@ -23,6 +29,72 @@ struct HistorySidebar: View {
                 .listStyle(.sidebar)
             }
         }
+        // メニュー (Cmd+C / Cmd+V) からこのサイドバーを駆動するためのハンドラ公開。
+        // 選択が無い時は copyImageHandler は nil → Copy メニューが自動的に disabled になる。
+        .focusedSceneValue(\.copyImageHandler, selectedCopyHandler)
+        .focusedSceneValue(\.pasteImageHandler, pasteHandler)
+        .alert("ペーストに失敗しました", isPresented: $showPasteError, presenting: pasteErrorMessage) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { msg in
+            Text(msg)
+        }
+    }
+
+    // MARK: - Clipboard handlers
+
+    private var selectedItem: CaptureItem? {
+        guard let id = selectedItemID else { return nil }
+        return historyStore.items.first(where: { $0.id == id })
+    }
+
+    private var selectedCopyHandler: (() -> Void)? {
+        guard let item = selectedItem else { return nil }
+        return {
+            copyToPasteboard(item: item)
+        }
+    }
+
+    private var pasteHandler: () -> Void {
+        return {
+            do {
+                let png = try PasteboardService.extractPNG(from: .general)
+                try persistPasted(pngData: png)
+            } catch {
+                pasteErrorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+                showPasteError = true
+                sidebarLog.error("paste failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    private func copyToPasteboard(item: CaptureItem) {
+        do {
+            let encoded = try PasteboardService.encode(item: item)
+            PasteboardService.write(encoded, to: .general)
+            sidebarLog.info("copied to pasteboard: \(item.fileURL.path, privacy: .public)")
+        } catch {
+            pasteErrorMessage = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+            showPasteError = true
+            sidebarLog.error("copy failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func persistPasted(pngData: Data) throws {
+        try StorageService.shared.prepare()
+        let url = StorageService.shared.nextImageURL()
+        try pngData.write(to: url)
+        let size = PasteboardService.pixelSize(forPNG: pngData) ?? .zero
+        let item = CaptureItem(
+            fileURL: url,
+            createdAt: Date(),
+            pixelSize: size,
+            captureMode: .full
+        )
+        historyStore.prepend(item)
+        selectedItemID = item.id
+        sidebarLog.info("pasted from pasteboard: \(url.path, privacy: .public) \(Int(size.width), privacy: .public)x\(Int(size.height), privacy: .public)")
     }
 }
 

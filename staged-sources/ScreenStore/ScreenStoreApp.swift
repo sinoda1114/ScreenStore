@@ -43,6 +43,7 @@ struct ScreenStoreApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            ClipboardCommands()
         }
 
         Settings {

@@ -638,3 +638,162 @@ struct ShortcutSettingsTests {
         #expect(m.contains(.control))
     }
 }
+
+// MARK: - PasteboardService (Sprint 3)
+
+@Suite("PasteboardService")
+struct PasteboardServiceTests {
+
+    private func makeTempPNG(width: Int = 16, height: Int = 12) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenStoreTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("sample.png")
+        try writeOnePixelPNG(url, width: width, height: height)
+        return url
+    }
+
+    @Test("encode: ファイルから PNG バイトを読み、URL とセットで返す")
+    func encodeReadsBytesAndKeepsURL() throws {
+        let url = try makeTempPNG()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let item = CaptureItem(fileURL: url, pixelSize: .init(width: 16, height: 12), captureMode: .full)
+        let encoded = try PasteboardService.encode(item: item)
+        #expect(encoded.fileURL == url)
+        #expect(!encoded.pngData.isEmpty)
+        // PNG マジック: 89 50 4E 47 ...
+        let bytes = [UInt8](encoded.pngData.prefix(4))
+        #expect(bytes == [0x89, 0x50, 0x4e, 0x47])
+    }
+
+    @Test("encode: ファイルが無ければエラーをスロー")
+    func encodeMissingFileThrows() {
+        let item = CaptureItem(
+            fileURL: URL(fileURLWithPath: "/tmp/__does_not_exist_\(UUID().uuidString).png"),
+            pixelSize: .init(width: 1, height: 1),
+            captureMode: .full
+        )
+        do {
+            _ = try PasteboardService.encode(item: item)
+            Issue.record("encode should have thrown for missing file")
+        } catch {
+            // 期待通り
+        }
+    }
+
+    @Test("toPNGData: .pngData はパススルー")
+    func toPNGDataPassesThroughPNG() throws {
+        let url = try makeTempPNG()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let png = try Data(contentsOf: url)
+        let out = try PasteboardService.toPNGData(.pngData(png))
+        #expect(out == png)
+    }
+
+    @Test("toPNGData: .tiffData → PNG に変換され、PNG マジックで始まる")
+    func toPNGDataConvertsTIFF() throws {
+        // NSBitmapImageRep で簡単な TIFF を作る
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 8, pixelsHigh: 8,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        let tiff = rep.tiffRepresentation!
+        let png = try PasteboardService.toPNGData(.tiffData(tiff))
+        let bytes = [UInt8](png.prefix(4))
+        #expect(bytes == [0x89, 0x50, 0x4e, 0x47])
+    }
+
+    @Test("toPNGData: .fileURL は拡張子 PNG ならそのまま、そうでなければ変換")
+    func toPNGDataReadsFileURL() throws {
+        let url = try makeTempPNG()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let png = try PasteboardService.toPNGData(.fileURL(url))
+        let bytes = [UInt8](png.prefix(4))
+        #expect(bytes == [0x89, 0x50, 0x4e, 0x47])
+    }
+
+    @Test("pixelSize(forPNG:): PNG バイト列の幅高さを返す")
+    func pixelSizeReturnsDimensions() throws {
+        let url = try makeTempPNG(width: 32, height: 24)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let data = try Data(contentsOf: url)
+        let size = PasteboardService.pixelSize(forPNG: data)
+        #expect(size?.width == 32)
+        #expect(size?.height == 24)
+    }
+
+    @Test("isImageFile: 画像系拡張子は true、それ以外は false")
+    func isImageFileExtensions() {
+        let yes = ["a.png", "b.PNG", "c.jpg", "d.jpeg", "e.tiff", "f.tif", "g.gif", "h.heic"]
+        let no  = ["a.txt", "b.md", "c.zip", "noext", "d.swift"]
+        for s in yes {
+            #expect(PasteboardService.isImageFile(url: URL(fileURLWithPath: "/tmp/\(s)")),
+                    "\(s) should be image")
+        }
+        for s in no {
+            #expect(!PasteboardService.isImageFile(url: URL(fileURLWithPath: "/tmp/\(s)")),
+                    "\(s) should NOT be image")
+        }
+    }
+
+    @Test("write + readSource: NSPasteboard 経由の往復")
+    func pasteboardRoundTrip() throws {
+        // 専用 pasteboard を作って global を汚さない
+        let pb = NSPasteboard(name: NSPasteboard.Name("ScreenStoreTest-\(UUID().uuidString)"))
+        let url = try makeTempPNG()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let item = CaptureItem(fileURL: url, pixelSize: .init(width: 16, height: 12), captureMode: .full)
+        let encoded = try PasteboardService.encode(item: item)
+        PasteboardService.write(encoded, to: pb)
+
+        // .png 型として読み戻せる
+        let source = PasteboardService.readSource(from: pb)
+        guard case .pngData(let data) = source else {
+            Issue.record("expected .pngData, got \(String(describing: source))")
+            return
+        }
+        #expect(data == encoded.pngData)
+    }
+
+    @Test("extractPNG: TIFF だけが入った pasteboard を PNG に変換して返す")
+    func extractPNGConvertsFromTIFF() throws {
+        let pb = NSPasteboard(name: NSPasteboard.Name("ScreenStoreTest-tiff-\(UUID().uuidString)"))
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 4, pixelsHigh: 4,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        let tiff = rep.tiffRepresentation!
+        pb.clearContents()
+        pb.declareTypes([.tiff], owner: nil)
+        pb.setData(tiff, forType: .tiff)
+
+        let png = try PasteboardService.extractPNG(from: pb)
+        let bytes = [UInt8](png.prefix(4))
+        #expect(bytes == [0x89, 0x50, 0x4e, 0x47])
+    }
+
+    @Test("extractPNG: 画像が無ければ noImageOnPasteboard を投げる")
+    func extractPNGEmptyThrows() {
+        let pb = NSPasteboard(name: NSPasteboard.Name("ScreenStoreTest-empty-\(UUID().uuidString)"))
+        pb.clearContents()
+        pb.declareTypes([.string], owner: nil)
+        pb.setString("hello", forType: .string)
+
+        do {
+            _ = try PasteboardService.extractPNG(from: pb)
+            Issue.record("空の pasteboard なのに extractPNG が成功した")
+        } catch PasteboardService.PasteError.noImageOnPasteboard {
+            // 期待通り
+        } catch {
+            Issue.record("予期しないエラー: \(error)")
+        }
+    }
+}
