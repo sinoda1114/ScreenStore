@@ -31,7 +31,23 @@ final class ScreenRecordingPermission: ObservableObject {
         return granted
     }
 
-    /// システム設定の「画面収録」ペインを開く。
+    /// バナーから呼ばれるエントリポイント。
+    /// 1. 先に CGRequestScreenCaptureAccess() を呼んで TCC データベースに
+    ///    ScreenStore を登録させる (これをしないとシステム設定のリストに出ない)
+    /// 2. システム設定の「画面収録」ペインを開く
+    /// 3. ユーザーが許諾するまでバックグラウンドでポーリング
+    func requestAccessAndOpenSettings() {
+        if CGPreflightScreenCaptureAccess() {
+            isGranted = true
+            return
+        }
+        // CGRequestScreenCaptureAccess() を呼ぶと TCC に登録され、
+        // 初回ならシステムダイアログが自動で出る (返値は即時)。
+        _ = CGRequestScreenCaptureAccess()
+        openSystemSettings()
+    }
+
+    /// システム設定の「画面収録」ペインを開くだけ (TCC 登録はしない)。
     func openSystemSettings() {
         let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         if let url = URL(string: urlString) {

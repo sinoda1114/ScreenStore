@@ -38,11 +38,11 @@ struct MainView: View {
             StatusBanner(
                 icon: "lock.shield",
                 title: "画面収録の許可が必要です",
-                message: "ScreenStore でキャプチャを行うには、システム設定の「プライバシーとセキュリティ > 画面収録」で ScreenStore を有効にしてください。",
+                message: "「許可をリクエスト」を押すと TCC に ScreenStore が登録され、システム設定の「プライバシーとセキュリティ > 画面収録」のリストに ScreenStore が表示されます。トグルを ON にして ScreenStore を再起動してください。",
                 tint: .orange,
                 primaryAction: (
-                    label: "システム設定を開く",
-                    action: { permission.openSystemSettings() }
+                    label: "許可をリクエスト",
+                    action: { permission.requestAccessAndOpenSettings() }
                 ),
                 secondaryAction: (
                     label: "再確認",
