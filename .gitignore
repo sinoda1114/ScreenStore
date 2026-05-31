@@ -47,3 +47,7 @@ fastlane/test_output
 *.swp
 .idea/
 .vscode/
+
+# LLVM coverage / profile
+*.profraw
+*.profdata
