@@ -165,6 +165,68 @@ final class CaptureService {
         )
     }
 
+    // MARK: - Interactive window picker (macOS 標準スタイル)
+
+    /// `/usr/sbin/screencapture -W` を呼び、macOS 標準の「カメラカーソル → ホバーで光る → クリックで撮る」
+    /// 体験そのままで 1 ウィンドウを撮影する。
+    /// ユーザーが ESC で抜けたとき (= ファイルが作られなかったとき) は nil を返す。
+    func captureSelectedWindowInteractive() async throws -> CaptureItem? {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw CaptureError.permissionDenied
+        }
+
+        try StorageService.shared.prepare()
+        let outURL = StorageService.shared.nextImageURL()
+
+        // ScreenStore 自身が選択肢に並ばないよう一旦隠す
+        await hideOwnWindows()
+        defer {
+            Task { @MainActor in
+                NSApp.unhide(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+
+        try await runScreencaptureCLI(arguments: [
+            "-W",                // ウィンドウ選択モード
+            "-o",                // ウィンドウシャドウなし (Sprint 1 と同じ方針)
+            "-x",                // 撮影音を鳴らさない
+            outURL.path
+        ])
+
+        // ESC でキャンセルされた場合はファイルが作られない
+        guard FileManager.default.fileExists(atPath: outURL.path) else {
+            return nil
+        }
+
+        let pixelSize = StorageService.readPixelSize(from: outURL) ?? .zero
+        return CaptureItem(
+            fileURL: outURL,
+            createdAt: Date(),
+            pixelSize: pixelSize,
+            captureMode: .window
+        )
+    }
+
+    /// `/usr/sbin/screencapture` をサブプロセスとして起動し、終了まで待つ。
+    /// メインスレッドをブロックしないよう terminationHandler ベースで継続を返す。
+    private func runScreencaptureCLI(arguments: [String]) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            process.arguments = arguments
+            process.terminationHandler = { _ in
+                cont.resume()
+            }
+            do {
+                try process.run()
+            } catch {
+                cont.resume(throwing: CaptureError.captureFailed(error))
+            }
+        }
+    }
+
     // MARK: - Region capture
 
     /// 指定スクリーン (= displayID) の上で選択された矩形をキャプチャする。

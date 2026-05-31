@@ -11,10 +11,6 @@ struct CaptureToolbar: View {
     @State private var lastError: String?
     @State private var showError = false
 
-    @State private var availableWindows: [WindowDescriptor] = []
-    @State private var windowFetchError: String?
-    @State private var isRefreshingWindows = false
-
     var body: some View {
         Group {
             Button {
@@ -26,13 +22,14 @@ struct CaptureToolbar: View {
             .disabled(isCapturing)
             .keyboardShortcut("2", modifiers: [.command, .shift])
 
-            Menu {
-                windowMenuContents
+            Button {
+                Task { await runWindowCapture() }
             } label: {
                 Label("ウィンドウ", systemImage: "macwindow")
             }
-            .help("ウィンドウ指定キャプチャ")
+            .help("ウィンドウ指定キャプチャ (画面上のウィンドウをクリックで選択 / ESC でキャンセル)")
             .disabled(isCapturing)
+            .keyboardShortcut("3", modifiers: [.command, .shift])
 
             Button {
                 Task { await runRegionCapture() }
@@ -48,48 +45,6 @@ struct CaptureToolbar: View {
         } message: { message in
             Text(message)
         }
-        .task { await refreshWindows() }
-    }
-
-    // MARK: - Window menu
-
-    @ViewBuilder
-    private var windowMenuContents: some View {
-        Group {
-            if isRefreshingWindows && availableWindows.isEmpty {
-                Text("一覧を取得中…")
-            } else if let err = windowFetchError {
-                Text("一覧の取得に失敗: \(err)")
-            } else if availableWindows.isEmpty {
-                Text("対象ウィンドウなし")
-            } else {
-                ForEach(groupedWindows, id: \.appName) { group in
-                    Section(group.appName) {
-                        ForEach(group.windows) { window in
-                            Button {
-                                Task { await runWindowCapture(window) }
-                            } label: {
-                                Text(window.title)
-                            }
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button {
-                Task { await refreshWindows() }
-            } label: {
-                Label("一覧を更新", systemImage: "arrow.clockwise")
-            }
-        }
-        .task { await refreshWindows() }
-    }
-
-    private var groupedWindows: [(appName: String, windows: [WindowDescriptor])] {
-        let grouped = Dictionary(grouping: availableWindows, by: { $0.appName })
-        return grouped
-            .map { (appName: $0.key, windows: $0.value.sorted { $0.title < $1.title }) }
-            .sorted { $0.appName < $1.appName }
     }
 
     // MARK: - Capture actions
@@ -110,19 +65,22 @@ struct CaptureToolbar: View {
     }
 
     @MainActor
-    private func runWindowCapture(_ window: WindowDescriptor) async {
+    private func runWindowCapture() async {
         isCapturing = true
         defer { isCapturing = false }
         guard await ensurePermission() else { return }
 
         do {
-            let item = try await CaptureService.shared.captureWindow(id: window.id)
+            // macOS 標準の `screencapture -W` を使ってインタラクティブにウィンドウを選ばせる。
+            // ESC でキャンセルされた場合は nil が返る。
+            guard let item = try await CaptureService.shared.captureSelectedWindowInteractive() else {
+                toolbarLog.info("window capture cancelled by user")
+                return
+            }
             historyStore.prepend(item)
-            toolbarLog.info("captureWindow OK: \(item.fileURL.path, privacy: .public) title=\(window.title, privacy: .public)")
+            toolbarLog.info("captureSelectedWindow OK: \(item.fileURL.path, privacy: .public)")
         } catch {
             handle(error: error)
-            // ウィンドウが消えていた場合に備えて再取得しておく
-            await refreshWindows()
         }
     }
 
@@ -178,22 +136,5 @@ struct CaptureToolbar: View {
         lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         showError = true
         toolbarLog.error("capture error: \(String(describing: error), privacy: .public)")
-    }
-
-    @MainActor
-    private func refreshWindows() async {
-        if isRefreshingWindows { return }
-        isRefreshingWindows = true
-        defer { isRefreshingWindows = false }
-        do {
-            let list = try await CaptureService.shared.listCapturableWindows()
-            availableWindows = list
-            windowFetchError = nil
-            toolbarLog.info("refreshWindows OK count=\(list.count, privacy: .public)")
-        } catch {
-            availableWindows = []
-            windowFetchError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            toolbarLog.error("refreshWindows failed: \(String(describing: error), privacy: .public)")
-        }
     }
 }
