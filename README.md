@@ -23,7 +23,7 @@ Phase 2 以降で OCR・画面録画・スクロールキャプチャを追加�
 
 1. Xcode で `ScreenStore.xcodeproj` を開く
 2. Run スキームを `ScreenStore` に設定し、`Cmd+R`
-3. 初回起動時に「画面収録」の許可を求められるので、システム設定で ScreenStore を許可してから再起動
+3. 初回起動時、または再ビルド後に画面収録が失敗する場合は、システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音で ScreenStore を一度「−」で削除し、「＋」から `/Applications/ScreenStore.app` を追加し直してから再起動
 
 ## 保存先
 
@@ -39,7 +39,7 @@ Phase 2 以降で OCR・画面録画・スクロールキャプチャを追加�
 
 | フラグ | 説明 |
 |---|---|
-| `--register-tcc` | 新しい cdhash を TCC db に登録 (再ビルド後の権限再認可前に実行) |
+| `--register-tcc` | 現在の app を TCC db に登録するための補助 |
 | `--smoke-capture` | 全画面キャプチャを 1 回実行してログ出力 → 終了 |
 | `--smoke-window` | 共有可能ウィンドウ一覧の先頭をキャプチャ → 終了 |
 | `--smoke-region <x>,<y>,<w>,<h>` | メイン画面の左下原点 / point 座標で範囲キャプチャ → 終了 |

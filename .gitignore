@@ -51,3 +51,9 @@ fastlane/test_output
 # LLVM coverage / profile
 *.profraw
 *.profdata
+
+# work-summary skill output (local-only, not pushed)
+work-summary/
+
+# 一時的なソース複製
+staged-sources/

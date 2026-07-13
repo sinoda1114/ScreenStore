@@ -5,11 +5,81 @@ import os.log
 
 private let appLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "app")
 
+/// アプリの起動/終了タイミングに対するフックを担当する。
+///
+/// 目的:
+/// - 起動時: macOS のスクリーンショット Floating Thumbnail を抑制（pasteboard 取り合いの解消）
+/// - 終了時: 起動前の `show-thumbnail` 値（true / false / 未設定）を完全に復元
+///
+/// SwiftUI 単独だとアプリ終了直前にこのフックが取りづらいので、
+/// `@NSApplicationDelegateAdaptor` 経由で AppKit のライフサイクル通知を受ける。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// SIGTERM をハンドルして `NSApp.terminate` にブリッジするための DispatchSource。
+    /// AppKit はデフォルトでは SIGTERM を即時死亡として扱い `applicationWillTerminate` を呼ばないため、
+    /// `pkill` / install.sh の `kill $PID` のような外部からの終了でも復元が走るようにする。
+    private var sigtermSource: DispatchSourceSignal?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        ScreencaptureThumbnail.suppress()
+        installSigtermBridge()
+        DispatchQueue.main.async {
+            self.configureMainWindows()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        configureMainWindows()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        ScreencaptureThumbnail.restore()
+    }
+
+    /// Dock アイコンのクリックやアプリ再アクティブ化でメインウィンドウを必ず呼び戻す。
+    ///
+    /// 常駐するキャプチャパレット (`NSPanel`) が生き続けるため、メインウィンドウを閉じると
+    /// アプリは終了せず、かつ「可視ウィンドウあり」と判定されて標準の再オープンも走らない。
+    /// その結果メインウィンドウ＝編集や履歴の画面に戻れなくなる。ここで明示的に復帰させる。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // パレットは NSPanel。メインは通常の NSWindow（メインになれる）で見分ける。
+        if let main = sender.windows.first(where: { !($0 is NSPanel) && $0.canBecomeMain }) {
+            main.makeKeyAndOrderFront(nil)
+            sender.activate(ignoringOtherApps: true)
+            return false
+        }
+        // メインウィンドウが破棄済みなら true を返して WindowGroup に再生成させる。
+        return true
+    }
+
+    private func configureMainWindows() {
+        for window in NSApp.windows where !(window is NSPanel) {
+            window.styleMask.remove(.fullSizeContentView)
+            window.titlebarAppearsTransparent = false
+            window.toolbarStyle = .expanded
+            window.backgroundColor = .windowBackgroundColor
+            window.isOpaque = true
+        }
+    }
+
+    private func installSigtermBridge() {
+        // デフォルトの SIGTERM ハンドラ（プロセス即死）を無効化してから DispatchSource で拾う。
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        sigtermSource = source
+    }
+}
+
 @main
 struct ScreenStoreApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var historyStore = HistoryStore()
     @StateObject private var permission = ScreenRecordingPermission()
     @StateObject private var shortcuts = ShortcutSettings()
+    @StateObject private var captureController = CaptureController()
 
     init() {
         if CommandLine.arguments.contains("--register-tcc") {
@@ -33,14 +103,17 @@ struct ScreenStoreApp: App {
                 .environmentObject(historyStore)
                 .environmentObject(permission)
                 .environmentObject(shortcuts)
+                .environmentObject(captureController)
                 .frame(minWidth: 920, minHeight: 600)
                 .task {
                     await historyStore.bootstrap()
                     permission.refresh()
+                    // env オブジェクトが揃ったこのタイミングで共有コントローラを構成し、
+                    // 起動時に常時最前面のフローティングパレットを表示する。
+                    captureController.configure(historyStore: historyStore, permission: permission)
+                    CapturePaletteController.shared.show(capture: captureController, shortcuts: shortcuts)
                 }
         }
-        .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {}
             ClipboardCommands()
@@ -62,16 +135,20 @@ struct ScreenStoreApp: App {
         let pre = CGPreflightScreenCaptureAccess()
         let req = CGRequestScreenCaptureAccess()
         appLog.info("register-tcc preflight=\(pre, privacy: .public) request=\(req, privacy: .public)")
+        print("register-tcc preflight=\(pre) request=\(req) app=\(Bundle.main.bundlePath)")
         Task.detached {
             do {
                 let content = try await SCShareableContent.current
                 appLog.info("register-tcc SCShareableContent OK: displays=\(content.displays.count, privacy: .public) windows=\(content.windows.count, privacy: .public)")
+                print("register-tcc SCShareableContent OK displays=\(content.displays.count) windows=\(content.windows.count)")
             } catch {
                 appLog.info("register-tcc SCShareableContent error (これが TCC ダイアログ誘発): \(String(describing: error), privacy: .public)")
+                print("register-tcc SCShareableContent error: \(String(describing: error))")
             }
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             let postPre = CGPreflightScreenCaptureAccess()
             appLog.info("register-tcc post-sleep preflight=\(postPre, privacy: .public)")
+            print("register-tcc post-sleep preflight=\(postPre)")
             await MainActor.run { NSApp.terminate(nil) }
         }
     }
@@ -82,14 +159,17 @@ struct ScreenStoreApp: App {
         appLog.info("smoke-capture starting")
         let preflight = CGPreflightScreenCaptureAccess()
         appLog.info("smoke-capture preflight=\(preflight, privacy: .public)")
+        print("smoke-capture preflight=\(preflight) app=\(Bundle.main.bundlePath)")
 
         Task.detached {
             do {
                 try StorageService.shared.prepare()
-                let item = try await CaptureService.shared.captureFullScreen()
-                appLog.info("smoke-capture OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
+                let output = try await CaptureService.shared.captureFullScreen()
+                appLog.info("smoke-capture OK: \(output.item.fileURL.path, privacy: .public) \(Int(output.item.pixelSize.width), privacy: .public)x\(Int(output.item.pixelSize.height), privacy: .public)")
+                print("smoke-capture OK: \(output.item.fileURL.path) \(Int(output.item.pixelSize.width))x\(Int(output.item.pixelSize.height))")
             } catch {
                 appLog.error("smoke-capture FAILED: \(String(describing: error), privacy: .public)")
+                print("smoke-capture FAILED: \(String(describing: error))")
             }
             await MainActor.run {
                 NSApp.terminate(nil)
@@ -140,13 +220,13 @@ struct ScreenStoreApp: App {
                     let screen = NSScreen.main ?? NSScreen.screens.first!
                     return (CaptureService.displayID(for: screen), screen.frame.size, screen.backingScaleFactor)
                 }
-                let item = try await CaptureService.shared.captureRegion(
+                let output = try await CaptureService.shared.captureRegion(
                     windowLocalRect: rect,
                     displayID: displayID,
                     screenPointSize: size,
                     backingScale: scale
                 )
-                appLog.info("smoke-region OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
+                appLog.info("smoke-region OK: \(output.item.fileURL.path, privacy: .public) \(Int(output.item.pixelSize.width), privacy: .public)x\(Int(output.item.pixelSize.height), privacy: .public)")
             } catch {
                 appLog.error("smoke-region FAILED: \(String(describing: error), privacy: .public)")
             }

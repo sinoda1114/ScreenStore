@@ -39,45 +39,58 @@ final class RegionSelectionController {
     }
 
     private func openOverlays() {
-        regionLog.info("opening overlays for \(NSScreen.screens.count, privacy: .public) screens")
-        overlayWindows.removeAll()
-        for screen in NSScreen.screens {
-            let win = RegionOverlayWindow(
-                contentRect: screen.frame,
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
-            )
-            win.isOpaque = false
-            win.backgroundColor = .clear
-            win.hasShadow = false
-            win.level = .screenSaver
-            win.ignoresMouseEvents = false
-            win.acceptsMouseMovedEvents = true
-            win.isMovableByWindowBackground = false
-            win.isReleasedWhenClosed = false
-            win.collectionBehavior = [
-                .canJoinAllSpaces,
-                .stationary,
-                .ignoresCycle,
-                .fullScreenAuxiliary
-            ]
-            win.setFrame(screen.frame, display: true)
+        closeOverlays()
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else {
+            cancelSelection()
+            return
+        }
 
-            let view = RegionOverlayView(targetScreen: screen, controller: self)
-            win.contentView = view
-            win.initialFirstResponder = view
-            win.makeFirstResponder(view)
-            overlayWindows.append(win)
+        regionLog.info("opening overlay on screen frame=\(NSStringFromRect(screen.frame), privacy: .public)")
+        let win = RegionOverlayWindow(
+            contentRect: screen.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.hasShadow = false
+        win.level = .screenSaver
+        win.ignoresMouseEvents = false
+        win.acceptsMouseMovedEvents = true
+        win.isMovableByWindowBackground = false
+        win.isReleasedWhenClosed = false
+        win.collectionBehavior = [
+            .canJoinAllSpaces,
+            .stationary,
+            .ignoresCycle,
+            .fullScreenAuxiliary
+        ]
+        win.setFrame(screen.frame, display: true)
+
+        let displayID = CaptureService.displayID(for: screen)
+        let backgroundImage = CGDisplayCreateImage(displayID).map {
+            NSImage(cgImage: $0, size: screen.frame.size)
         }
-        for win in overlayWindows {
-            win.orderFrontRegardless()
-            win.makeKey()
-        }
+        let view = RegionOverlayView(
+            targetScreen: screen,
+            controller: self,
+            backgroundImage: backgroundImage
+        )
+        view.frame = NSRect(origin: .zero, size: screen.frame.size)
+        view.autoresizingMask = [.width, .height]
+        win.contentView = view
+        win.initialFirstResponder = view
+        win.makeFirstResponder(view)
+        overlayWindows = [win]
+
         NSApp.activate(ignoringOtherApps: true)
-        if let first = overlayWindows.first {
-            first.makeKeyAndOrderFront(nil)
-        }
+        win.makeKeyAndOrderFront(nil)
+        win.orderFrontRegardless()
     }
 
     private func closeOverlays() {
@@ -122,17 +135,17 @@ final class RegionOverlayWindow: NSWindow {
 final class RegionOverlayView: NSView {
     let targetScreen: NSScreen
     weak var controller: RegionSelectionController?
+    private let backgroundImage: NSImage?
 
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
 
-    init(targetScreen: NSScreen, controller: RegionSelectionController) {
+    init(targetScreen: NSScreen, controller: RegionSelectionController, backgroundImage: NSImage?) {
         self.targetScreen = targetScreen
         self.controller = controller
+        self.backgroundImage = backgroundImage
         super.init(frame: .zero)
-        self.wantsLayer = true
-        // 透過オーバーレイなので layer も透過に
-        self.layer?.backgroundColor = NSColor.clear.cgColor
+        self.wantsLayer = false
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -155,20 +168,20 @@ final class RegionOverlayView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         startPoint = p
         currentPoint = p
-        needsDisplay = true
+        setNeedsDisplay(bounds)
     }
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         currentPoint = p
-        needsDisplay = true
+        setNeedsDisplay(bounds)
     }
 
     override func mouseUp(with event: NSEvent) {
         defer {
             startPoint = nil
             currentPoint = nil
-            needsDisplay = true
+            setNeedsDisplay(bounds)
         }
         guard let rect = selectionRect, rect.width >= 4, rect.height >= 4 else {
             controller?.cancelSelection()
@@ -195,20 +208,13 @@ final class RegionOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-        // 1) 全面を半透明の暗幕で塗る
-        context.saveGState()
-        context.setFillColor(CGColor(gray: 0.0, alpha: 0.35))
-        context.fill(bounds)
-        context.restoreGState()
+        drawBackground()
 
         if let rect = selectionRect {
-            // 2) 選択矩形の中だけ blendMode = .clear で「穴」を開ける
-            context.saveGState()
-            context.setBlendMode(.clear)
-            context.fill(rect)
-            context.restoreGState()
+            // 背景スクショの上に、選択範囲の周囲4辺だけ暗幕を描く。
+            // 透明ウィンドウ依存を捨てることで、全面グレー化しても範囲内は見える。
+            drawDimmingRects(excluding: rect, in: context)
 
-            // 3) 選択矩形の輪郭線を描く
             context.saveGState()
             context.setStrokeColor(NSColor.systemYellow.withAlphaComponent(0.95).cgColor)
             context.setLineWidth(1.0)
@@ -217,8 +223,44 @@ final class RegionOverlayView: NSView {
 
             drawSizeLabel(rect: rect, in: context)
         } else {
+            context.saveGState()
+            context.setFillColor(CGColor(gray: 0.0, alpha: 0.35))
+            context.fill(bounds)
+            context.restoreGState()
             drawHintLabel(in: context)
         }
+    }
+
+    private func drawBackground() {
+        guard let backgroundImage else {
+            NSColor.clear.setFill()
+            bounds.fill()
+            return
+        }
+        backgroundImage.draw(
+            in: bounds,
+            from: NSRect(origin: .zero, size: backgroundImage.size),
+            operation: .copy,
+            fraction: 1.0
+        )
+    }
+
+    private func drawDimmingRects(excluding rect: CGRect, in context: CGContext) {
+        let clipped = rect.intersection(bounds)
+        context.saveGState()
+        context.setFillColor(CGColor(gray: 0.0, alpha: 0.35))
+        if clipped.isNull || clipped.isEmpty {
+            context.fill(bounds)
+        } else {
+            let top = CGRect(x: bounds.minX, y: clipped.maxY, width: bounds.width, height: bounds.maxY - clipped.maxY)
+            let bottom = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: clipped.minY - bounds.minY)
+            let left = CGRect(x: bounds.minX, y: clipped.minY, width: clipped.minX - bounds.minX, height: clipped.height)
+            let right = CGRect(x: clipped.maxX, y: clipped.minY, width: bounds.maxX - clipped.maxX, height: clipped.height)
+            for dimRect in [top, bottom, left, right] where dimRect.width > 0 && dimRect.height > 0 {
+                context.fill(dimRect)
+            }
+        }
+        context.restoreGState()
     }
 
     private func drawSizeLabel(rect: CGRect, in context: CGContext) {

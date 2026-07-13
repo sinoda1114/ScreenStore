@@ -22,9 +22,15 @@ enum CaptureError: LocalizedError {
         case .croppingFailed:
             return "画像の切り抜きに失敗しました。"
         case .permissionDenied:
-            return "画面収録の許可がありません。システム設定 > プライバシーとセキュリティ > 画面収録 で ScreenStore を有効にしてください。"
+            return """
+            画面収録の許可が現在起動中の ScreenStore に紐づいていません。
+            システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音 で ScreenStore を一度「−」で削除し、「＋」から /Applications/ScreenStore.app を追加し直してから ScreenStore を再起動してください。
+
+            起動中のアプリ: \(Bundle.main.bundlePath)
+            """
         case .captureFailed(let err):
-            return "キャプチャに失敗しました: \(err.localizedDescription)"
+            let nsError = err as NSError
+            return "キャプチャ処理に失敗しました: \(nsError.localizedDescription) (\(nsError.domain) \(nsError.code))"
         }
     }
 }
@@ -38,25 +44,38 @@ struct WindowDescriptor: Identifiable, Sendable, Hashable {
     let frame: CGRect
 }
 
+/// キャプチャ結果。`item` は履歴用、`pngData` は同じ内容のバイト列で
+/// 「クリップボードへの即時貼り付け」に使う。ディスクから読み直すレイテンシを避けるため。
+struct CaptureOutput {
+    let item: CaptureItem
+    let pngData: Data
+}
+
 final class CaptureService {
     static let shared = CaptureService()
 
     /// 自前で除外したい bundle ID (= ScreenStore 自身)。
     private static let ownBundleIdentifier = "com.sinoda.ScreenStore"
 
+    /// SCShareableContent.excludingDesktopWindows は macOS 14+ で 0.5〜2 秒かかることがあり、
+    /// 連続キャプチャの体感レスポンスを大きく落とす。短時間のキャッシュで 2 発目以降を高速化する。
+    private var displaysCache: (displays: [SCDisplay], at: Date)?
+    private static let displaysCacheTTL: TimeInterval = 5.0
+
     private init() {}
 
     // MARK: - Full screen
 
-    /// メインディスプレイの全画面を PNG として保存し、CaptureItem を返す。
+    /// メインディスプレイの全画面を PNG として保存し、CaptureOutput を返す。
     /// アプリ自身のウィンドウは一時的に隠して写り込みを避ける。
-    func captureFullScreen() async throws -> CaptureItem {
+    func captureFullScreen() async throws -> CaptureOutput {
         guard CGPreflightScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
 
         await hideOwnWindows()
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        // ウィンドウを完全にフェードアウトさせるための待ち。最低限を狙って 150ms に短縮。
+        try? await Task.sleep(nanoseconds: 150_000_000)
 
         let unhide: () -> Void = {
             Task { @MainActor in
@@ -78,15 +97,18 @@ final class CaptureService {
         }
         unhide()
 
+        // PNG をメモリで 1 回だけエンコードし、ディスクとクリップボードで使い回す。
+        let pngData = try StorageService.shared.encodePNGData(cgImage)
         let url = StorageService.shared.nextImageURL()
-        try StorageService.shared.writePNG(cgImage, to: url)
+        try StorageService.shared.writePNGData(pngData, to: url)
 
-        return CaptureItem(
+        let item = CaptureItem(
             fileURL: url,
             createdAt: Date(),
             pixelSize: CGSize(width: cgImage.width, height: cgImage.height),
             captureMode: .full
         )
+        return CaptureOutput(item: item, pngData: pngData)
     }
 
     // MARK: - Window picker
@@ -170,7 +192,7 @@ final class CaptureService {
     /// `/usr/sbin/screencapture -W` を呼び、macOS 標準の「カメラカーソル → ホバーで光る → クリックで撮る」
     /// 体験そのままで 1 ウィンドウを撮影する。
     /// ユーザーが ESC で抜けたとき (= ファイルが作られなかったとき) は nil を返す。
-    func captureSelectedWindowInteractive() async throws -> CaptureItem? {
+    func captureSelectedWindowInteractive() async throws -> CaptureOutput? {
         guard CGPreflightScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
@@ -186,7 +208,8 @@ final class CaptureService {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // ウィンドウフェード分を 150ms に短縮 (ScreenStore は単一ウィンドウなので元から軽い)
+        try? await Task.sleep(nanoseconds: 150_000_000)
 
         try await runScreencaptureCLI(arguments: [
             "-W",                // ウィンドウ選択モード
@@ -200,13 +223,17 @@ final class CaptureService {
             return nil
         }
 
-        let pixelSize = StorageService.readPixelSize(from: outURL) ?? .zero
-        return CaptureItem(
+        // ファイル本体は CLI が書いている。今回は 1 度だけ読んで pixelSize と pasteboard 用 PNG の両方を満たす。
+        let pngData = (try? Data(contentsOf: outURL)) ?? Data()
+        let pixelSize = PasteboardService.pixelSize(forPNG: pngData)
+            ?? StorageService.readPixelSize(from: outURL) ?? .zero
+        let item = CaptureItem(
             fileURL: outURL,
             createdAt: Date(),
             pixelSize: pixelSize,
             captureMode: .window
         )
+        return CaptureOutput(item: item, pngData: pngData)
     }
 
     /// `/usr/sbin/screencapture` をサブプロセスとして起動し、終了まで待つ。
@@ -244,7 +271,7 @@ final class CaptureService {
         displayID: CGDirectDisplayID,
         screenPointSize: CGSize,
         backingScale: CGFloat
-    ) async throws -> CaptureItem {
+    ) async throws -> CaptureOutput {
         guard CGPreflightScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
@@ -272,15 +299,17 @@ final class CaptureService {
             throw CaptureError.croppingFailed
         }
 
+        let pngData = try StorageService.shared.encodePNGData(cropped)
         let url = StorageService.shared.nextImageURL()
-        try StorageService.shared.writePNG(cropped, to: url)
+        try StorageService.shared.writePNGData(pngData, to: url)
 
-        return CaptureItem(
+        let item = CaptureItem(
             fileURL: url,
             createdAt: Date(),
             pixelSize: CGSize(width: cropped.width, height: cropped.height),
             captureMode: .region
         )
+        return CaptureOutput(item: item, pngData: pngData)
     }
 
     // MARK: - Internal helpers
@@ -295,6 +324,33 @@ final class CaptureService {
     }
 
     private func fetchDisplay(matching displayID: CGDirectDisplayID?) async throws -> SCDisplay {
+        let displays = try await fetchDisplays()
+        guard !displays.isEmpty else {
+            throw CaptureError.noDisplay
+        }
+
+        if let displayID, let match = displays.first(where: { $0.displayID == displayID }) {
+            return match
+        }
+        if let main = displays.first(where: { $0.displayID == CGMainDisplayID() }) {
+            return main
+        }
+        if let first = displays.first {
+            return first
+        }
+        throw CaptureError.noDisplay
+    }
+
+    /// 表示中ディスプレイ一覧を 5 秒キャッシュ。
+    /// `SCShareableContent.excludingDesktopWindows` が hot path で 0.5〜2 秒かかる問題への対策。
+    /// 連続キャプチャの 2 発目以降はキャッシュヒットでほぼ 0ms。
+    /// SCK 撮影に失敗したらキャッシュは破棄するので、ディスプレイ構成が変わっても次回で復帰する。
+    private func fetchDisplays() async throws -> [SCDisplay] {
+        if let cache = displaysCache,
+           Date().timeIntervalSince(cache.at) < Self.displaysCacheTTL,
+           !cache.displays.isEmpty {
+            return cache.displays
+        }
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(
@@ -304,22 +360,13 @@ final class CaptureService {
         } catch {
             throw CaptureError.captureFailed(error)
         }
+        displaysCache = (content.displays, Date())
+        return content.displays
+    }
 
-        guard !content.displays.isEmpty else {
-            throw CaptureError.noDisplay
-        }
-
-        if let displayID,
-           let match = content.displays.first(where: { $0.displayID == displayID }) {
-            return match
-        }
-        if let main = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) {
-            return main
-        }
-        if let first = content.displays.first {
-            return first
-        }
-        throw CaptureError.noDisplay
+    /// SCK 撮影に失敗したときにキャッシュを破棄する hook。
+    private func invalidateDisplaysCache() {
+        displaysCache = nil
     }
 
     private func captureImage(of display: SCDisplay) async throws -> CGImage {
@@ -343,6 +390,8 @@ final class CaptureService {
                 configuration: config
             )
         } catch {
+            // ディスプレイが変わっている可能性があるのでキャッシュは捨てる。
+            invalidateDisplaysCache()
             throw CaptureError.captureFailed(error)
         }
     }

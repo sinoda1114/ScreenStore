@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import ScreenCaptureKit
 import SwiftUI
 import os.log
 
@@ -53,6 +54,7 @@ final class ScreenRecordingPermission: ObservableObject {
         // 初回ならシステムダイアログが自動で出る (返値は即時)。
         let req = CGRequestScreenCaptureAccess()
         permLog.info("CGRequestScreenCaptureAccess returned \(req, privacy: .public)")
+        registerWithScreenCaptureKit()
         openSystemSettings()
     }
 
@@ -78,6 +80,19 @@ final class ScreenRecordingPermission: ObservableObject {
                     self.isGranted = granted
                 }
                 if granted { return }
+            }
+        }
+    }
+
+    /// macOS 15 では CoreGraphics 側の要求だけでは設定リストへの反映が遅れることがある。
+    /// ScreenCaptureKit の共有可能コンテンツ取得も一度走らせ、TCC の登録を確実に促す。
+    private func registerWithScreenCaptureKit() {
+        Task.detached {
+            do {
+                _ = try await SCShareableContent.current
+                permLog.info("SCShareableContent registration succeeded")
+            } catch {
+                permLog.info("SCShareableContent registration returned error: \(String(describing: error), privacy: .public)")
             }
         }
     }

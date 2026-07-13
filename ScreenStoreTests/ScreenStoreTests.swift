@@ -326,7 +326,8 @@ struct CaptureServiceIntegrationTests {
         }
 
         // 権限あり: 実際にキャプチャして PNG を確認
-        let item = try await CaptureService.shared.captureFullScreen()
+        let output = try await CaptureService.shared.captureFullScreen()
+        let item = output.item
         defer { try? FileManager.default.removeItem(at: item.fileURL) }
 
         #expect(FileManager.default.fileExists(atPath: item.fileURL.path))
@@ -334,6 +335,7 @@ struct CaptureServiceIntegrationTests {
         #expect(item.pixelSize.height > 0)
         #expect(item.captureMode == .full)
         #expect(item.fileURL.pathExtension == "png")
+        #expect(!output.pngData.isEmpty)
 
         // 実体ファイルからサイズを読めることも確認
         let size = StorageService.readPixelSize(from: item.fileURL)
@@ -381,12 +383,13 @@ struct CaptureServiceIntegrationTests {
 
         // 画面の中央付近 100x80 ポイントを切り抜く
         let rect = CGRect(x: 50, y: 50, width: 100, height: 80)
-        let item = try await CaptureService.shared.captureRegion(
+        let output = try await CaptureService.shared.captureRegion(
             windowLocalRect: rect,
             displayID: displayID,
             screenPointSize: size,
             backingScale: scale
         )
+        let item = output.item
         defer { try? FileManager.default.removeItem(at: item.fileURL) }
 
         #expect(FileManager.default.fileExists(atPath: item.fileURL.path))
@@ -394,6 +397,7 @@ struct CaptureServiceIntegrationTests {
         // pixel サイズは int(scale * pt) になる
         #expect(item.pixelSize.width == CGFloat(Int(rect.width * scale)))
         #expect(item.pixelSize.height == CGFloat(Int(rect.height * scale)))
+        #expect(!output.pngData.isEmpty)
         print("=== Region captured: \(item.fileURL.path), \(Int(item.pixelSize.width))x\(Int(item.pixelSize.height)) ===")
     }
 }

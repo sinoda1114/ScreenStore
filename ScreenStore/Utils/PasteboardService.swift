@@ -27,6 +27,42 @@ enum PasteboardService {
         pasteboard.setString(encoded.fileURL.absoluteString, forType: .fileURL)
     }
 
+    /// 既にメモリ上にある PNG バイト列とファイル URL をそのままクリップボードに書く。
+    /// キャプチャ直後にファイルを再読込せず即時貼り付け可能にしたい hot path 用。
+    static func writePNG(data: Data, fileURL: URL, to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.png, .fileURL], owner: nil)
+        pasteboard.setData(data, forType: .png)
+        pasteboard.setString(fileURL.absoluteString, forType: .fileURL)
+    }
+
+    /// 複数の CaptureItem をクリップボードに書き出す。
+    /// - 1 件のときは PNG バイト列 + ファイル URL を従来どおり書き、画像エディタやチャット欄が
+    ///   そのまま画像として貼り付けられるようにする。
+    /// - 複数件のときは NSURL を `writeObjects` で全件書き、Finder / Mail / Cursor などが
+    ///   「複数ファイル」として受け取れるようにする (pasteboard 規格上、複数 PNG の生データを
+    ///   同時に置く方法はないため、ファイル URL を真とする)。
+    static func writeItems(_ items: [CaptureItem], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !items.isEmpty else { return }
+
+        if items.count == 1 {
+            if items[0].isVideo {
+                pasteboard.writeObjects([items[0].fileURL as NSURL])
+                return
+            }
+            if let encoded = try? encode(item: items[0]) {
+                pasteboard.declareTypes([.png, .fileURL], owner: nil)
+                pasteboard.setData(encoded.pngData, forType: .png)
+                pasteboard.setString(encoded.fileURL.absoluteString, forType: .fileURL)
+                return
+            }
+        }
+        // 複数: NSURL の writeObjects で全件
+        let urls = items.map { $0.fileURL as NSURL }
+        pasteboard.writeObjects(urls)
+    }
+
     // MARK: - Paste (入力)
 
     /// NSPasteboard から取り出した raw データを 1 ステップで PNG バイト列に変換する。
@@ -35,6 +71,25 @@ enum PasteboardService {
             throw PasteError.noImageOnPasteboard
         }
         return try toPNGData(source)
+    }
+
+    /// クリップボード上にある画像を全部取り出して PNG バイト列の配列にする。
+    /// - 複数の画像ファイル URL があれば全件読む
+    /// - URL が 1 件もなく単一画像データしか無いときは 1 件として返す
+    /// - 何も無ければ空配列ではなく throws (UI 側でメッセージを出すため)
+    static func extractAllPNGs(from pasteboard: NSPasteboard) throws -> [Data] {
+        // 1) 複数ファイル URL を最優先で扱う
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let imageURLs = urls.filter { isImageFile(url: $0) }
+            if imageURLs.count >= 2 {
+                return try imageURLs.map { url in
+                    try toPNGData(.fileURL(url))
+                }
+            }
+        }
+        // 2) 単一: 既存ロジック
+        let single = try extractPNG(from: pasteboard)
+        return [single]
     }
 
     /// NSPasteboard から取り出した「画像ソース」。テスト容易性のため public。

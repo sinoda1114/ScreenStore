@@ -47,6 +47,29 @@ enum RegionMath {
         ).integral
     }
 
+    /// `screencapture -R` に渡すためのグローバル pixel 矩形。
+    /// `CGDisplayBounds` はディスプレイごとのグローバル pixel 座標を返すため、
+    /// 画面内の top-left pixel 矩形を足し込む。
+    static func screencapturePixelRect(
+        windowLocalRect rect: CGRect,
+        windowSize: CGSize,
+        backingScale scale: CGFloat,
+        displayID: CGDirectDisplayID
+    ) -> CGRect {
+        let local = pixelCropRect(
+            windowLocalRect: rect,
+            windowSize: windowSize,
+            backingScale: scale
+        )
+        let displayBounds = CGDisplayBounds(displayID)
+        return CGRect(
+            x: displayBounds.minX + local.minX,
+            y: displayBounds.minY + local.minY,
+            width: local.width,
+            height: local.height
+        ).integral
+    }
+
     /// 与えられた pixel 矩形を画像の境界内にクランプする。
     /// 画面外まで広げて選択された場合や、整数化丸めで 1px はみ出た場合の保険。
     static func clamp(rect: CGRect, to imageSize: CGSize) -> CGRect {
