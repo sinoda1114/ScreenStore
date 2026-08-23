@@ -24,6 +24,8 @@ struct SettingsView: View {
 
 private struct GeneralSettingsView: View {
     @State private var savePath: String = StorageService.shared.imagesDirectory.path
+    @AppStorage(AppPreferenceKeys.capturePaletteBackgroundOpacity)
+    private var paletteBackgroundOpacity = AppPreferenceKeys.defaultCapturePaletteBackgroundOpacity
 
     var body: some View {
         Form {
@@ -42,6 +44,33 @@ private struct GeneralSettingsView: View {
                 Text("保存先")
             } footer: {
                 Text("撮影した PNG はすべてこのフォルダ配下に保存されます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("フローティングパレット") {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: Binding(
+                                get: { paletteBackgroundOpacity },
+                                set: { paletteBackgroundOpacity = min(max($0, 0.35), 1) }
+                            ),
+                            in: 0.35...1,
+                            step: 0.05
+                        )
+                        .frame(width: 180)
+
+                        Text("\(Int((paletteBackgroundOpacity * 100).rounded()))%")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                }
+            } header: {
+                Text("表示")
+            } footer: {
+                Text("数値を下げるほど背景が透けます。アイコンと文字は読みやすさを優先して濃く表示します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

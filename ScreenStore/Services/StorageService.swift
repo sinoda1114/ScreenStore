@@ -165,6 +165,66 @@ final class StorageService {
         loadExistingImageItems() + loadExistingVideoItems()
     }
 
+    /// 外部アプリから追加・削除されたファイルとの差分確認用。
+    /// 画像のデコードは行わず、対象拡張子の URL だけを軽量に列挙する。
+    func existingMediaFileURLs() -> Set<URL> {
+        let fm = FileManager.default
+        let imageEntries = (try? fm.contentsOfDirectory(
+            at: imagesDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        let legacyVideoEntries = (try? fm.contentsOfDirectory(
+            at: videosDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        let imageDirectoryMedia = imageEntries.filter {
+            ["png", "mov", "mp4", "m4v"].contains($0.pathExtension.lowercased())
+        }
+        let legacyVideos = legacyVideoEntries.filter {
+            ["mov", "mp4", "m4v"].contains($0.pathExtension.lowercased())
+        }
+        return Set(imageDirectoryMedia + legacyVideos)
+    }
+
+    /// 差分監視で新しく見つかった URL だけを CaptureItem に変換する。
+    /// 書き込み途中でサイズを読めないファイルは次回の照合まで保留する。
+    func loadMediaItems(at urls: [URL]) -> [CaptureItem] {
+        urls.compactMap { url in
+            let attrs = try? url.resourceValues(forKeys: [
+                .creationDateKey,
+                .contentModificationDateKey
+            ])
+            let createdAt = attrs?.creationDate
+                ?? attrs?.contentModificationDate
+                ?? Date(timeIntervalSince1970: 0)
+
+            switch url.pathExtension.lowercased() {
+            case "png":
+                guard let pixelSize = Self.readPixelSize(from: url) else { return nil }
+                return CaptureItem(
+                    fileURL: url,
+                    createdAt: createdAt,
+                    pixelSize: pixelSize,
+                    captureMode: .full
+                )
+            case "mov", "mp4", "m4v":
+                guard let pixelSize = Self.readVideoPixelSize(from: url) else { return nil }
+                return CaptureItem(
+                    fileURL: url,
+                    createdAt: createdAt,
+                    pixelSize: pixelSize,
+                    captureMode: .regionRecording,
+                    mediaKind: .video
+                )
+            default:
+                return nil
+            }
+        }
+    }
+
     private func loadExistingImageItems() -> [CaptureItem] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
