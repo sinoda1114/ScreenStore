@@ -9,6 +9,8 @@ import AppKit
 struct CapturePaletteView: View {
     @EnvironmentObject private var capture: CaptureController
     @EnvironmentObject private var shortcuts: ShortcutSettings
+    @AppStorage(AppPreferenceKeys.capturePaletteBackgroundOpacity)
+    private var backgroundOpacity = AppPreferenceKeys.defaultCapturePaletteBackgroundOpacity
 
     /// 閉じるボタンで呼ばれる。パレット (NSPanel) を hide する。
     var onClose: () -> Void = {}
@@ -79,10 +81,11 @@ struct CapturePaletteView: View {
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.regularMaterial)
+                .opacity(clampedBackgroundOpacity)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.08 * clampedBackgroundOpacity), lineWidth: 1)
         )
         .padding(8)
         .alert("キャプチャに失敗しました", isPresented: $capture.showError, presenting: capture.lastError) { _ in
@@ -96,6 +99,10 @@ struct CapturePaletteView: View {
         PaletteDragHandleView()
         .frame(width: 18, height: 38)
         .help("ドラッグして移動")
+    }
+
+    private var clampedBackgroundOpacity: Double {
+        min(max(backgroundOpacity, 0.35), 1)
     }
 
     @ViewBuilder
