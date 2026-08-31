@@ -11,12 +11,14 @@ struct CapturePaletteView: View {
     @EnvironmentObject private var shortcuts: ShortcutSettings
     @AppStorage(AppPreferenceKeys.capturePaletteBackgroundOpacity)
     private var backgroundOpacity = AppPreferenceKeys.defaultCapturePaletteBackgroundOpacity
+    @AppStorage(AppPreferenceKeys.capturePaletteScale)
+    private var storedScale = AppPreferenceKeys.defaultCapturePaletteScale
 
     /// 閉じるボタンで呼ばれる。パレット (NSPanel) を hide する。
     var onClose: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: scaled(2)) {
             sideDragHandle
 
             paletteButton(
@@ -36,9 +38,9 @@ struct CapturePaletteView: View {
             }
 
             paletteButton(
-                title: "範囲",
+                title: "切抜",
                 systemImage: "selection.pin.in.out",
-                help: "自由範囲キャプチャ (\(shortcuts.region.displayString))"
+                help: "選択範囲を切り抜き (\(shortcuts.region.displayString))"
             ) {
                 await capture.runRegion()
             }
@@ -54,8 +56,8 @@ struct CapturePaletteView: View {
             }
 
             Divider()
-                .frame(height: 22)
-                .padding(.horizontal, 2)
+                .frame(height: scaled(16))
+                .padding(.horizontal, scaled(1))
 
             paletteButton(
                 title: capture.delayedCaptureCountdown.map { "\($0)秒" } ?? "遅延",
@@ -69,25 +71,28 @@ struct CapturePaletteView: View {
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 30, height: 30)
+                    .font(.system(size: scaled(10), weight: .semibold))
+                    .frame(width: scaled(20), height: scaled(20))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("パレットを閉じる")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, scaled(6))
+        .padding(.vertical, scaled(3))
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: scaled(9), style: .continuous)
                 .fill(.regularMaterial)
                 .opacity(clampedBackgroundOpacity)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: scaled(9), style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08 * clampedBackgroundOpacity), lineWidth: 1)
         )
-        .padding(8)
+        .padding(scaled(3))
+        .onChange(of: storedScale) { _, _ in
+            CapturePaletteController.shared.refreshSize()
+        }
         .alert("キャプチャに失敗しました", isPresented: $capture.showError, presenting: capture.lastError) { _ in
             Button("OK", role: .cancel) {}
         } message: { message in
@@ -97,12 +102,23 @@ struct CapturePaletteView: View {
 
     private var sideDragHandle: some View {
         PaletteDragHandleView()
-        .frame(width: 18, height: 38)
+        .frame(width: scaled(10), height: scaled(28))
         .help("ドラッグして移動")
     }
 
     private var clampedBackgroundOpacity: Double {
         min(max(backgroundOpacity, 0.35), 1)
+    }
+
+    private var paletteScale: CGFloat {
+        CGFloat(min(
+            max(storedScale, AppPreferenceKeys.minimumCapturePaletteScale),
+            AppPreferenceKeys.maximumCapturePaletteScale
+        ))
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        value * paletteScale
     }
 
     @ViewBuilder
@@ -118,20 +134,20 @@ struct CapturePaletteView: View {
         Button {
             Task { await action() }
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: scaled(2)) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.system(size: scaled(13), weight: .regular))
                 Text(title)
-                    .font(.system(size: 9))
+                    .font(.system(size: scaled(7.5)))
             }
-            .frame(width: 52, height: 38)
+            .frame(width: scaled(42), height: scaled(28))
             .contentShape(Rectangle())
             .foregroundStyle(isActiveRecording ? Color.white : Color.primary)
             .background {
                 if isActiveRecording {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: scaled(6), style: .continuous)
                         .fill(Color.red)
-                        .shadow(color: Color.red.opacity(0.45), radius: 7, x: 0, y: 0)
+                        .shadow(color: Color.red.opacity(0.4), radius: scaled(4), x: 0, y: 0)
                 }
             }
         }
@@ -169,13 +185,16 @@ private final class PaletteDragHandleNSView: NSView {
         super.draw(dirtyRect)
         let color = NSColor.labelColor.withAlphaComponent(0.28)
         let secondary = NSColor.labelColor.withAlphaComponent(0.18)
-        drawHandleLine(x: bounds.midX - 3, color: color)
-        drawHandleLine(x: bounds.midX + 3, color: secondary)
+        let offset = bounds.width * 0.3
+        drawHandleLine(x: bounds.midX - offset, color: color)
+        drawHandleLine(x: bounds.midX + offset, color: secondary)
     }
 
     private func drawHandleLine(x: CGFloat, color: NSColor) {
-        let rect = NSRect(x: x - 1.5, y: bounds.midY - 11, width: 3, height: 22)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
+        let width = max(1.5, bounds.width * 0.2)
+        let height = bounds.height * 0.5
+        let rect = NSRect(x: x - width / 2, y: bounds.midY - height / 2, width: width, height: height)
+        let path = NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2)
         color.setFill()
         path.fill()
     }

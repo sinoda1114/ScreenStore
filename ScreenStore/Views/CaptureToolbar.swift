@@ -31,9 +31,9 @@ struct CaptureToolbar: View {
             Button {
                 Task { await capture.runRegion() }
             } label: {
-                Label("範囲", systemImage: "selection.pin.in.out")
+                Label("切抜", systemImage: "selection.pin.in.out")
             }
-            .help("自由範囲キャプチャ (\(shortcuts.region.displayString))")
+            .help("選択範囲を切り抜き (\(shortcuts.region.displayString))")
             .disabled(capture.isCapturing)
             .keyboardShortcut(shortcuts.region.keyEquivalent,
                               modifiers: shortcuts.region.swiftUIEventModifiers)

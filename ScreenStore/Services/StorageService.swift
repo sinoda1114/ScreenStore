@@ -158,7 +158,14 @@ final class StorageService {
     }
 
     func loadExistingImages() -> [CaptureItem] {
-        loadExistingMedia().filter { $0.mediaKind == .image }
+        loadExistingMedia()
+            .filter { $0.mediaKind == .image }
+            .sorted { lhs, rhs in
+                if lhs.createdAt == rhs.createdAt {
+                    return lhs.fileURL.lastPathComponent > rhs.fileURL.lastPathComponent
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
     }
 
     func loadExistingMedia() -> [CaptureItem] {

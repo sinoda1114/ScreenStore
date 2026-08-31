@@ -1,5 +1,9 @@
 import Foundation
 import SwiftUI
+import AppKit
+import os.log
+
+private let historyStoreLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "history-store")
 
 @MainActor
 final class HistoryStore: ObservableObject {
@@ -16,6 +20,11 @@ final class HistoryStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var periodicRefreshTask: Task<Void, Never>?
     private var isReconcilingWithDisk = false
+    private let pasteboard: NSPasteboard
+
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+    }
 
     deinit {
         directoryWatchSource?.cancel()
@@ -176,10 +185,26 @@ final class HistoryStore: ObservableObject {
         let retainedItems = items.filter { diskURLs.contains($0.fileURL) }
         items = (retainedItems + addedItems).sorted { $0.createdAt > $1.createdAt }
 
-        if let newestAddedItem = addedItems.max(by: { $0.createdAt < $1.createdAt }) {
-            selectedIDs = [newestAddedItem.id]
-        } else if !items.contains(where: { selectedIDs.contains($0.id) }) {
+        if !selectAndCopyNewestAddedItem(from: addedItems),
+           !items.contains(where: { selectedIDs.contains($0.id) }) {
             selectedIDs = items.first.map { [$0.id] } ?? []
         }
+    }
+
+    /// macOS 純正スクリーンショットなど、保存フォルダーへ外部から追加された最新画像を
+    /// 選択し、そのまま ⌘V できるようクリップボードにも載せる。
+    /// 動画は履歴で選択するだけにして、既存のクリップボードを上書きしない。
+    @discardableResult
+    func selectAndCopyNewestAddedItem(from addedItems: [CaptureItem]) -> Bool {
+        guard let newestAddedItem = addedItems.max(by: { $0.createdAt < $1.createdAt }) else {
+            return false
+        }
+
+        selectedIDs = [newestAddedItem.id]
+        guard !newestAddedItem.isVideo else { return true }
+
+        PasteboardService.writeItems([newestAddedItem], to: pasteboard)
+        historyStoreLog.info("external image auto-copied: \(newestAddedItem.fileURL.path, privacy: .public)")
+        return true
     }
 }

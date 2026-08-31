@@ -299,6 +299,34 @@ struct HistoryStoreTests {
         #expect(store.items.count == 3)
         #expect(store.items.allSatisfy { item in new.contains { $0.id == item.id } })
     }
+
+    @Test("外部追加された最新 PNG を選択してクリップボードへコピーする")
+    func externallyAddedPNGIsSelectedAndCopied() throws {
+        let pasteboard = NSPasteboard(name: .init("ScreenStoreHistoryTest-\(UUID().uuidString)"))
+        let store = HistoryStore(pasteboard: pasteboard)
+        let url = makeTempBaseDir().appendingPathComponent("native-screenshot.png")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { cleanup(url.deletingLastPathComponent()) }
+        try writeOnePixelPNG(url, width: 12, height: 8)
+
+        let item = CaptureItem(
+            fileURL: url,
+            pixelSize: .init(width: 12, height: 8),
+            captureMode: .region
+        )
+        let handled = store.selectAndCopyNewestAddedItem(from: [item])
+
+        #expect(handled)
+        #expect(store.selectedIDs == [item.id])
+        guard case .pngData(let copiedData) = PasteboardService.readSource(from: pasteboard) else {
+            Issue.record("外部追加 PNG がクリップボードへコピーされていない")
+            return
+        }
+        #expect(copiedData == (try Data(contentsOf: url)))
+    }
 }
 
 // MARK: - CaptureService (TCC 権限あり前提のスモークテスト)
