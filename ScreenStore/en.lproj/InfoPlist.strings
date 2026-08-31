@@ -1,0 +1,2 @@
+"CFBundleName" = "ScreenStore";
+"NSScreenCaptureUsageDescription" = "ScreenStore needs Screen & System Audio Recording access to capture screenshots and record selected regions. ScreenStore does not record system audio.";

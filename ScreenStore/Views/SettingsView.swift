@@ -216,7 +216,7 @@ final class ShortcutRecorderButton: NSButton {
 
     func refreshTitle() {
         if isRecording {
-            title = "押してください…"
+            title = String(localized: "shortcut.press_keys")
         } else {
             title = specProvider?().displayString ?? ""
         }

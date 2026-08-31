@@ -288,7 +288,7 @@ final class RegionOverlayView: NSView {
     }
 
     private func drawHintLabel(in context: CGContext) {
-        let hint = "ドラッグで範囲選択 / ESC でキャンセル"
+        let hint = String(localized: "region.selection_hint")
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.9)

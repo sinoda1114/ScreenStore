@@ -14,23 +14,26 @@ enum CaptureError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noDisplay:
-            return "利用可能なディスプレイが見つかりませんでした。"
+            return String(localized: "capture.error.no_display")
         case .windowNotFound:
-            return "対象のウィンドウが既に閉じられているか、共有可能ウィンドウから外れました。一覧を更新してから再度お試しください。"
+            return String(localized: "capture.error.window_not_found")
         case .emptyRegion:
-            return "選択範囲が空、もしくは画面外です。もう一度ドラッグしてやり直してください。"
+            return String(localized: "capture.error.empty_region")
         case .croppingFailed:
-            return "画像の切り抜きに失敗しました。"
+            return String(localized: "capture.error.cropping_failed")
         case .permissionDenied:
-            return """
-            画面収録の許可が現在起動中の ScreenStore に紐づいていません。
-            システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音 で ScreenStore を一度「−」で削除し、「＋」から /Applications/ScreenStore.app を追加し直してから ScreenStore を再起動してください。
-
-            起動中のアプリ: \(Bundle.main.bundlePath)
-            """
+            return String.localizedStringWithFormat(
+                String(localized: "capture.error.permission_denied"),
+                Bundle.main.bundlePath
+            )
         case .captureFailed(let err):
             let nsError = err as NSError
-            return "キャプチャ処理に失敗しました: \(nsError.localizedDescription) (\(nsError.domain) \(nsError.code))"
+            return String.localizedStringWithFormat(
+                String(localized: "capture.error.failed"),
+                nsError.localizedDescription,
+                nsError.domain,
+                nsError.code
+            )
         }
     }
 }
@@ -135,7 +138,8 @@ final class CaptureService {
             guard let title = window.title, !title.isEmpty else { return nil }
             let bundleID = window.owningApplication?.bundleIdentifier
             if bundleID == Self.ownBundleIdentifier { return nil }
-            let appName = window.owningApplication?.applicationName ?? "(不明なアプリ)"
+            let appName = window.owningApplication?.applicationName
+                ?? String(localized: "window.unknown_app")
             return WindowDescriptor(
                 id: window.windowID,
                 title: title,
@@ -155,7 +159,7 @@ final class CaptureService {
     /// 指定 windowID のウィンドウだけを SCK でキャプチャする。
     /// SCContentFilter(desktopIndependentWindow:) を使うので、ウィンドウが画面上で
     /// 他に隠されていても直接コンテンツを取得できる (ScreenStore のウィンドウを隠す必要はない)。
-    func captureWindow(id windowID: CGWindowID) async throws -> CaptureItem {
+    func captureWindow(id windowID: CGWindowID) async throws -> CaptureOutput {
         guard CGPreflightScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
@@ -176,82 +180,17 @@ final class CaptureService {
 
         let cgImage = try await captureImage(of: window)
 
+        let pngData = try StorageService.shared.encodePNGData(cgImage)
         let url = StorageService.shared.nextImageURL()
-        try StorageService.shared.writePNG(cgImage, to: url)
+        try StorageService.shared.writePNGData(pngData, to: url)
 
-        return CaptureItem(
+        let item = CaptureItem(
             fileURL: url,
             createdAt: Date(),
             pixelSize: CGSize(width: cgImage.width, height: cgImage.height),
             captureMode: .window
         )
-    }
-
-    // MARK: - Interactive window picker (macOS 標準スタイル)
-
-    /// `/usr/sbin/screencapture -W` を呼び、macOS 標準の「カメラカーソル → ホバーで光る → クリックで撮る」
-    /// 体験そのままで 1 ウィンドウを撮影する。
-    /// ユーザーが ESC で抜けたとき (= ファイルが作られなかったとき) は nil を返す。
-    func captureSelectedWindowInteractive() async throws -> CaptureOutput? {
-        guard CGPreflightScreenCaptureAccess() else {
-            throw CaptureError.permissionDenied
-        }
-
-        try StorageService.shared.prepare()
-        let outURL = StorageService.shared.nextImageURL()
-
-        // ScreenStore 自身が選択肢に並ばないよう一旦隠す
-        await hideOwnWindows()
-        defer {
-            Task { @MainActor in
-                NSApp.unhide(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        }
-        // ウィンドウフェード分を 150ms に短縮 (ScreenStore は単一ウィンドウなので元から軽い)
-        try? await Task.sleep(nanoseconds: 150_000_000)
-
-        try await runScreencaptureCLI(arguments: [
-            "-W",                // ウィンドウ選択モード
-            "-o",                // ウィンドウシャドウなし (Sprint 1 と同じ方針)
-            "-x",                // 撮影音を鳴らさない
-            outURL.path
-        ])
-
-        // ESC でキャンセルされた場合はファイルが作られない
-        guard FileManager.default.fileExists(atPath: outURL.path) else {
-            return nil
-        }
-
-        // ファイル本体は CLI が書いている。今回は 1 度だけ読んで pixelSize と pasteboard 用 PNG の両方を満たす。
-        let pngData = (try? Data(contentsOf: outURL)) ?? Data()
-        let pixelSize = PasteboardService.pixelSize(forPNG: pngData)
-            ?? StorageService.readPixelSize(from: outURL) ?? .zero
-        let item = CaptureItem(
-            fileURL: outURL,
-            createdAt: Date(),
-            pixelSize: pixelSize,
-            captureMode: .window
-        )
         return CaptureOutput(item: item, pngData: pngData)
-    }
-
-    /// `/usr/sbin/screencapture` をサブプロセスとして起動し、終了まで待つ。
-    /// メインスレッドをブロックしないよう terminationHandler ベースで継続を返す。
-    private func runScreencaptureCLI(arguments: [String]) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = arguments
-            process.terminationHandler = { _ in
-                cont.resume()
-            }
-            do {
-                try process.run()
-            } catch {
-                cont.resume(throwing: CaptureError.captureFailed(error))
-            }
-        }
     }
 
     // MARK: - Region capture

@@ -1,0 +1,2 @@
+"CFBundleName" = "ScreenStore";
+"NSScreenCaptureUsageDescription" = "ScreenStoreでスクリーンショットの撮影と選択範囲の録画を行うために、画面収録の許可が必要です。システム音声は録音しません。";

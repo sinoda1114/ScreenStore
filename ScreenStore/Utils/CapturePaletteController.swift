@@ -35,6 +35,9 @@ final class CapturePaletteController {
         let rootView = CapturePaletteView(
             onClose: { [weak self] in
                 self?.hide()
+            },
+            onCollapsedChange: { [weak self] isCollapsed in
+                self?.refreshSizeForCollapsedState(isCollapsed)
             }
         )
         .environmentObject(capture)
@@ -104,9 +107,21 @@ final class CapturePaletteController {
 
     /// 設定画面のスライダー変更後に、現在表示中のパネルを新しい自然サイズへ追従させる。
     func refreshSize() {
+        let allowsCompactWidth = panel.map { $0.frame.width < 100 } ?? false
+        scheduleResize(preservingLeftEdge: false, allowsCompactWidth: allowsCompactWidth)
+    }
+
+    private func refreshSizeForCollapsedState(_ isCollapsed: Bool) {
+        scheduleResize(preservingLeftEdge: true, allowsCompactWidth: isCollapsed)
+    }
+
+    private func scheduleResize(preservingLeftEdge: Bool, allowsCompactWidth: Bool) {
         Task { @MainActor [weak self] in
             await Task.yield()
-            self?.resizePanelToFit()
+            self?.resizePanelToFit(
+                preservingLeftEdge: preservingLeftEdge,
+                allowsCompactWidth: allowsCompactWidth
+            )
         }
     }
 
@@ -184,22 +199,33 @@ final class CapturePaletteController {
         ))
     }
 
-    private func resizePanelToFit() {
+    private func resizePanelToFit(preservingLeftEdge: Bool, allowsCompactWidth: Bool) {
         guard let panel, let hosting = panel.contentView else { return }
 
         let centerX = panel.frame.midX
+        let minX = panel.frame.minX
         let minY = panel.frame.minY
         hosting.invalidateIntrinsicContentSize()
         hosting.needsLayout = true
         hosting.layoutSubtreeIfNeeded()
 
         let contentSize = hosting.fittingSize
-        guard contentSize.width >= 100, contentSize.height >= 20 else { return }
+        let minimumWidth: CGFloat = allowsCompactWidth ? 1 : 100
+        guard contentSize.width >= minimumWidth, contentSize.height >= 20 else { return }
 
         panel.setContentSize(contentSize)
         hosting.frame = NSRect(origin: .zero, size: contentSize)
-        panel.setFrameOrigin(NSPoint(x: centerX - panel.frame.width / 2, y: minY))
+        let desiredX = preservingLeftEdge ? minX : centerX - panel.frame.width / 2
+        panel.setFrameOrigin(NSPoint(x: clampedOriginX(desiredX, for: panel), y: minY))
         paletteLog.info("capture palette resized frame=\(NSStringFromRect(panel.frame), privacy: .public)")
+    }
+
+    private func clampedOriginX(_ desiredX: CGFloat, for panel: NSPanel) -> CGFloat {
+        guard let visibleFrame = (panel.screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame else {
+            return desiredX
+        }
+        let maximumX = max(visibleFrame.minX, visibleFrame.maxX - panel.frame.width)
+        return min(max(desiredX, visibleFrame.minX), maximumX)
     }
 
 }

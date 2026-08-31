@@ -46,6 +46,37 @@ private func writeOnePixelPNG(_ url: URL, width: Int = 4, height: Int = 4) throw
     }
 }
 
+// MARK: - App Store resources
+
+@Suite("App Store Resources")
+struct AppStoreResourceTests {
+    @Test("英語・日本語のローカライズリソースがバンドルされる")
+    func localizationResourcesAreBundled() throws {
+        let enPath = try #require(Bundle.main.path(forResource: "en", ofType: "lproj"))
+        let jaPath = try #require(Bundle.main.path(forResource: "ja", ofType: "lproj"))
+        let enBundle = try #require(Bundle(path: enPath))
+        let jaBundle = try #require(Bundle(path: jaPath))
+
+        #expect(enBundle.localizedString(forKey: "一般", value: nil, table: nil) == "General")
+        #expect(jaBundle.localizedString(forKey: "一般", value: nil, table: nil) == "一般")
+        #expect(enBundle.localizedString(forKey: "recording.error.no_frames", value: nil, table: nil)
+                == "No video frames were recorded. Please try again.")
+    }
+
+    @Test("プライバシーマニフェストは追跡・データ収集なし")
+    func privacyManifestDeclaresNoCollection() throws {
+        let url = try #require(Bundle.main.url(forResource: "PrivacyInfo", withExtension: "xcprivacy"))
+        let data = try Data(contentsOf: url)
+        let plist = try #require(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+
+        #expect(plist["NSPrivacyTracking"] as? Bool == false)
+        #expect((plist["NSPrivacyCollectedDataTypes"] as? [Any])?.isEmpty == true)
+        #expect((plist["NSPrivacyTrackingDomains"] as? [Any])?.isEmpty == true)
+    }
+}
+
 // MARK: - CaptureItem
 
 @Suite("CaptureItem")
@@ -528,6 +559,24 @@ struct RegionMathTests {
             backingScale: 1.0
         )
         #expect(result == CGRect(x: 0, y: 0, width: 10, height: 10))
+    }
+
+    @Test("ScreenCaptureKit sourceRect は point のまま Y 軸だけ反転する")
+    func screenCaptureKitSourceRectFlipsYAxisWithoutScaling() {
+        let result = RegionMath.screenCaptureKitSourceRect(
+            windowLocalRect: CGRect(x: 100, y: 50, width: 200, height: 300),
+            windowSize: CGSize(width: 1000, height: 800)
+        )
+        #expect(result == CGRect(x: 100, y: 450, width: 200, height: 300))
+    }
+
+    @Test("ScreenCaptureKit sourceRect は画面上端なら y=0 になる")
+    func screenCaptureKitSourceRectAtTopEdge() {
+        let result = RegionMath.screenCaptureKitSourceRect(
+            windowLocalRect: CGRect(x: 25, y: 700, width: 150, height: 100),
+            windowSize: CGSize(width: 1000, height: 800)
+        )
+        #expect(result == CGRect(x: 25, y: 0, width: 150, height: 100))
     }
 
     @Test("pixelCropRect は integral 化されている (端数入力でも整数)")

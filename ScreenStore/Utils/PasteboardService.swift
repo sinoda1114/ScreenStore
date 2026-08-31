@@ -186,9 +186,9 @@ enum PasteboardService {
         var errorDescription: String? {
             switch self {
             case .noImageOnPasteboard:
-                return "クリップボードに画像が見つかりませんでした。"
+                return String(localized: "pasteboard.error.no_image")
             case .cannotConvert:
-                return "クリップボード上のデータを PNG に変換できませんでした。"
+                return String(localized: "pasteboard.error.conversion_failed")
             }
         }
     }

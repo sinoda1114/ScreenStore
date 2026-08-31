@@ -6,23 +6,30 @@ enum VideoSpeedExportError: LocalizedError {
     case noTracks
     case cannotCreateExporter
     case exportFailed(String)
-    case ffmpegUnavailable
     case speedVerificationFailed(expected: Double, actual: Double)
 
     var errorDescription: String? {
         switch self {
         case .invalidSpeed(let speed):
-            return "倍率が不正です: \(speed)"
+            return String.localizedStringWithFormat(
+                String(localized: "video.error.invalid_speed"),
+                speed
+            )
         case .noTracks:
-            return "動画または音声トラックを読み込めませんでした。"
+            return String(localized: "video.error.no_tracks")
         case .cannotCreateExporter:
-            return "動画の書き出しを開始できませんでした。"
+            return String(localized: "video.error.cannot_create_exporter")
         case .exportFailed(let message):
-            return "倍速動画の書き出しに失敗しました。\n\(message)"
-        case .ffmpegUnavailable:
-            return "ffmpeg が見つかりませんでした。"
+            return String.localizedStringWithFormat(
+                String(localized: "video.error.export_failed"),
+                message
+            )
         case .speedVerificationFailed(let expected, let actual):
-            return "倍速変換後の長さが想定と合いませんでした。\n想定: 約 \(String(format: "%.2f", expected)) 秒\n実際: \(String(format: "%.2f", actual)) 秒"
+            return String.localizedStringWithFormat(
+                String(localized: "video.error.verification_failed"),
+                expected,
+                actual
+            )
         }
     }
 }
@@ -31,12 +38,6 @@ enum VideoSpeedExportService {
     static func export(inputURL: URL, outputURL: URL, speed: Double) async throws -> URL {
         guard speed > 0.1, speed <= 10 else {
             throw VideoSpeedExportError.invalidSpeed(speed)
-        }
-
-        if let ffmpegURL = ffmpegExecutableURL() {
-            try await exportWithFFmpeg(ffmpegURL: ffmpegURL, inputURL: inputURL, outputURL: outputURL, speed: speed)
-            try verifySpeed(inputURL: inputURL, outputURL: outputURL, speed: speed)
-            return outputURL
         }
 
         let asset = AVURLAsset(url: inputURL)
@@ -78,63 +79,18 @@ enum VideoSpeedExportService {
                 case .completed:
                     continuation.resume(returning: outputURL)
                 case .failed, .cancelled:
-                    let message = exporter.error?.localizedDescription ?? "不明なエラー"
+                    let message = exporter.error?.localizedDescription
+                        ?? String(localized: "error.unknown")
                     continuation.resume(throwing: VideoSpeedExportError.exportFailed(message))
                 default:
-                    continuation.resume(throwing: VideoSpeedExportError.exportFailed("書き出しが完了しませんでした。"))
+                    continuation.resume(throwing: VideoSpeedExportError.exportFailed(
+                        String(localized: "video.error.export_incomplete")
+                    ))
                 }
             }
         }
         try verifySpeed(inputURL: inputURL, outputURL: outputURL, speed: speed)
         return exported
-    }
-
-    private static func exportWithFFmpeg(ffmpegURL: URL, inputURL: URL, outputURL: URL, speed: Double) async throws {
-        try? FileManager.default.removeItem(at: outputURL)
-
-        let asset = AVURLAsset(url: inputURL)
-        let hasAudio = !asset.tracks(withMediaType: .audio).isEmpty
-
-        var arguments = [
-            "-y",
-            "-i", inputURL.path
-        ]
-
-        let speedString = speedArgument(speed)
-        if hasAudio {
-            arguments += [
-                "-filter_complex",
-                "[0:v]setpts=PTS/\(speedString)[v];[0:a]\(atempoChain(for: speed))[a]",
-                "-map", "[v]",
-                "-map", "[a]"
-            ]
-        } else {
-            arguments += [
-                "-filter:v", "setpts=PTS/\(speedString)",
-                "-an"
-            ]
-        }
-
-        arguments += [
-            "-movflags", "+faststart",
-            outputURL.path
-        ]
-
-        let process = Process()
-        process.executableURL = ffmpegURL
-        process.arguments = arguments
-
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: data, encoding: .utf8) ?? "ffmpeg がエラーを返しました。"
-            throw VideoSpeedExportError.exportFailed(message)
-        }
     }
 
     private static func verifySpeed(inputURL: URL, outputURL: URL, speed: Double) throws {
@@ -153,35 +109,4 @@ enum VideoSpeedExportService {
         AVURLAsset(url: url).duration.seconds
     }
 
-    private static func ffmpegExecutableURL() -> URL? {
-        [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-        .map(URL.init(fileURLWithPath:))
-        .first { FileManager.default.isExecutableFile(atPath: $0.path) }
-    }
-
-    private static func speedArgument(_ speed: Double) -> String {
-        String(format: "%.6f", speed)
-            .replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
-    }
-
-    private static func atempoChain(for speed: Double) -> String {
-        var remaining = speed
-        var parts: [String] = []
-
-        while remaining > 2 {
-            parts.append("atempo=2.0")
-            remaining /= 2
-        }
-        while remaining < 0.5 {
-            parts.append("atempo=0.5")
-            remaining /= 0.5
-        }
-        parts.append("atempo=\(speedArgument(remaining))")
-        return parts.joined(separator: ",")
-    }
 }

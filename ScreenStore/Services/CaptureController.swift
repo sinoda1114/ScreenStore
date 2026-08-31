@@ -25,8 +25,6 @@ final class CaptureController: ObservableObject {
     /// env オブジェクトはアプリ起動後に注入されるため弱参照で保持する。
     private weak var historyStore: HistoryStore?
     private weak var permission: ScreenRecordingPermission?
-    private var recordingProcess: Process?
-    private var recordingInputPipe: Pipe?
     private var recordingURL: URL?
     private var recordingPixelSize: CGSize = .zero
     private var recordingStartedAt: Date?
@@ -87,13 +85,13 @@ final class CaptureController: ObservableObject {
         guard await ensurePermission() else { return }
 
         do {
-            // macOS 標準の `screencapture -W` を使ってインタラクティブにウィンドウを選ばせる。
-            // ESC でキャンセルされた場合は nil が返る。
-            guard let output = try await CaptureService.shared.captureSelectedWindowInteractive() else {
+            let windows = try await CaptureService.shared.listCapturableWindows()
+            guard let selected = await WindowSelectionController.shared.selectWindow(from: windows) else {
                 captureControllerLog.info("window capture cancelled by user")
                 return
             }
-            finishCapture(output, kind: "captureSelectedWindow")
+            let output = try await CaptureService.shared.captureWindow(id: selected.id)
+            finishCapture(output, kind: "captureWindow")
         } catch {
             handle(error: error)
         }
@@ -137,6 +135,12 @@ final class CaptureController: ObservableObject {
         }
     }
 
+    /// 通常終了時に録画ファイルを確定してからアプリを閉じるための終了フック。
+    func stopActiveRecordingForTermination() async {
+        guard isRecording else { return }
+        await stopRegionRecording()
+    }
+
     private func startRegionRecording() async {
         guard !isCapturing, !isRecording else { return }
         isCapturing = true
@@ -151,15 +155,7 @@ final class CaptureController: ObservableObject {
         try? await Task.sleep(nanoseconds: 120_000_000)
 
         let displayID = CaptureService.displayID(for: selection.screen)
-        let scale = selection.screen.backingScaleFactor
-        let size = selection.screen.frame.size
-        let rect = RegionMath.screencapturePixelRect(
-            windowLocalRect: selection.rect,
-            windowSize: size,
-            backingScale: scale,
-            displayID: displayID
-        )
-        guard rect.width >= 1, rect.height >= 1 else {
+        guard selection.rect.width >= 1, selection.rect.height >= 1 else {
             handle(error: CaptureError.emptyRegion)
             return
         }
@@ -167,57 +163,48 @@ final class CaptureController: ObservableObject {
         do {
             try StorageService.shared.prepare()
             let url = StorageService.shared.nextVideoURL()
-            let process = Process()
-            let inputPipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = [
-                "-v",
-                "-x",
-                "-R", "\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height))",
-                url.path
-            ]
-            process.standardInput = inputPipe
-            try process.run()
-
-            recordingProcess = process
-            recordingInputPipe = inputPipe
+            let pixelSize = try await ScreenRecordingService.shared.start(
+                selection: selection,
+                displayID: displayID,
+                outputURL: url
+            )
             recordingURL = url
-            recordingPixelSize = CGSize(width: rect.width, height: rect.height)
+            recordingPixelSize = pixelSize
             recordingStartedAt = Date()
             isRecording = true
             captureControllerLog.info("region recording started: \(url.path, privacy: .public)")
         } catch {
-            recordingProcess = nil
-            recordingInputPipe = nil
             recordingURL = nil
             recordingPixelSize = .zero
             recordingStartedAt = nil
-            handle(error: CaptureError.captureFailed(error))
+            handle(error: error)
         }
     }
 
     private func stopRegionRecording() async {
-        guard let process = recordingProcess,
-              let url = recordingURL else {
+        guard let url = recordingURL else {
             isRecording = false
             return
         }
 
-        let didExit = await terminateRecordingProcess(process)
-        recordingProcess = nil
-        recordingInputPipe = nil
         recordingURL = nil
         isRecording = false
 
-        guard didExit else {
-            handle(error: CaptureError.captureFailed(CocoaError(.executableLoad)))
+        do {
+            try await ScreenRecordingService.shared.stop()
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            recordingPixelSize = .zero
+            recordingStartedAt = nil
+            handle(error: error)
             return
         }
 
-        // screencapture がファイルを finalize する猶予。
-        try? await Task.sleep(nanoseconds: 250_000_000)
         guard FileManager.default.fileExists(atPath: url.path),
               ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
+            try? FileManager.default.removeItem(at: url)
+            recordingPixelSize = .zero
+            recordingStartedAt = nil
             captureControllerLog.info("region recording stopped without output")
             return
         }
@@ -235,41 +222,6 @@ final class CaptureController: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([url as NSURL])
         captureControllerLog.info("region recording stopped: \(url.path, privacy: .public)")
-    }
-
-    private func terminateRecordingProcess(_ process: Process) async -> Bool {
-        await withCheckedContinuation { continuation in
-            var resumed = false
-            func resume(_ value: Bool) {
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(returning: value)
-            }
-
-            if !process.isRunning {
-                resume(true)
-                return
-            }
-
-            process.terminationHandler = { _ in
-                resume(true)
-            }
-            if let inputPipe = recordingInputPipe {
-                inputPipe.fileHandleForWriting.write(Data([UInt8(ascii: "q")]))
-                try? inputPipe.fileHandleForWriting.close()
-            } else {
-                process.terminate()
-            }
-
-            Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if process.isRunning {
-                    process.terminate()
-                }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                resume(!process.isRunning)
-            }
-        }
     }
 
     // MARK: - Shared post-processing
