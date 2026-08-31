@@ -166,7 +166,7 @@ private struct PreviewContent: View {
                 onCancel: { isShowingCustomSpeed = false },
                 onExport: {
                     guard let speed = Double(customSpeedText), speed > 0.1, speed <= 10 else {
-                        speedExportError = "0.1〜10 の範囲で倍率を入力してください。"
+                        speedExportError = String(localized: "video.error.speed_range")
                         isShowingCustomSpeed = false
                         return
                     }

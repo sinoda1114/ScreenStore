@@ -122,7 +122,10 @@ struct MainView: View {
             isPreparingEditor = false
             guard let cg else {
                 mainViewLog.error("failed to load editable image: \(url.path, privacy: .public)")
-                editErrorMessage = "編集用の画像を読み込めませんでした。\n\(url.path)"
+                editErrorMessage = String.localizedStringWithFormat(
+                    String(localized: "editor.error.load_image"),
+                    url.path
+                )
                 cancelEditing()
                 return
             }
@@ -155,7 +158,7 @@ struct MainView: View {
     private func save(model: AnnotationEditorModel) {
         guard let item = previewedItem else { return }
         guard let cg = model.flattenedCGImage() else {
-            editErrorMessage = "注釈の合成に失敗しました。"
+            editErrorMessage = String(localized: "editor.error.render_annotations")
             return
         }
         do {
@@ -177,7 +180,7 @@ struct MainView: View {
 
     private func copy(model: AnnotationEditorModel) {
         guard let cg = model.flattenedCGImage() else {
-            editErrorMessage = "注釈の合成に失敗しました。"
+            editErrorMessage = String(localized: "editor.error.render_annotations")
             return
         }
         do {
@@ -194,7 +197,7 @@ struct MainView: View {
     private func saveAs(model: AnnotationEditorModel) {
         guard let item = previewedItem else { return }
         guard let cg = model.flattenedCGImage() else {
-            editErrorMessage = "注釈の合成に失敗しました。"
+            editErrorMessage = String(localized: "editor.error.render_annotations")
             return
         }
         let panel = NSSavePanel()

@@ -47,6 +47,21 @@ enum RegionMath {
         ).integral
     }
 
+    /// AppKit の左下原点・point矩形を、ScreenCaptureKit の `sourceRect` が使う
+    /// 左上原点・point矩形へ変換する。ピクセル倍率は `SCStreamConfiguration.width/height`
+    /// にだけ反映し、`sourceRect` 自体には掛けない。
+    static func screenCaptureKitSourceRect(
+        windowLocalRect rect: CGRect,
+        windowSize: CGSize
+    ) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: windowSize.height - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
     /// `screencapture -R` に渡すためのグローバル pixel 矩形。
     /// `CGDisplayBounds` はディスプレイごとのグローバル pixel 座標を返すため、
     /// 画面内の top-left pixel 矩形を足し込む。

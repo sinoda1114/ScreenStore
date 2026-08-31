@@ -12,11 +12,22 @@ enum StorageError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .directoryCreationFailed(let url, let err):
-            return "ディレクトリ作成に失敗: \(url.path)\n\(err.localizedDescription)"
+            return String.localizedStringWithFormat(
+                String(localized: "storage.error.directory_creation"),
+                url.path,
+                err.localizedDescription
+            )
         case .fileWriteFailed(let url, let err):
-            return "ファイル書き出しに失敗: \(url.path)\n\(err.localizedDescription)"
+            return String.localizedStringWithFormat(
+                String(localized: "storage.error.file_write"),
+                url.path,
+                err.localizedDescription
+            )
         case .pngEncodingFailed(let url):
-            return "PNG エンコードに失敗: \(url.path)"
+            return String.localizedStringWithFormat(
+                String(localized: "storage.error.png_encoding"),
+                url.path
+            )
         }
     }
 }

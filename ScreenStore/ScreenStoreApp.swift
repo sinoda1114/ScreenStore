@@ -6,22 +6,8 @@ import os.log
 private let appLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "app")
 
 /// アプリの起動/終了タイミングに対するフックを担当する。
-///
-/// 目的:
-/// - 起動時: macOS のスクリーンショット Floating Thumbnail を抑制（pasteboard 取り合いの解消）
-/// - 終了時: 起動前の `show-thumbnail` 値（true / false / 未設定）を完全に復元
-///
-/// SwiftUI 単独だとアプリ終了直前にこのフックが取りづらいので、
-/// `@NSApplicationDelegateAdaptor` 経由で AppKit のライフサイクル通知を受ける。
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// SIGTERM をハンドルして `NSApp.terminate` にブリッジするための DispatchSource。
-    /// AppKit はデフォルトでは SIGTERM を即時死亡として扱い `applicationWillTerminate` を呼ばないため、
-    /// `pkill` / install.sh の `kill $PID` のような外部からの終了でも復元が走るようにする。
-    private var sigtermSource: DispatchSourceSignal?
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        ScreencaptureThumbnail.suppress()
-        installSigtermBridge()
         DispatchQueue.main.async {
             self.configureMainWindows()
         }
@@ -29,10 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         configureMainWindows()
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        ScreencaptureThumbnail.restore()
     }
 
     /// Dock アイコンのクリックやアプリ再アクティブ化でメインウィンドウを必ず呼び戻す。
@@ -61,16 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func installSigtermBridge() {
-        // デフォルトの SIGTERM ハンドラ（プロセス即死）を無効化してから DispatchSource で拾う。
-        signal(SIGTERM, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler {
-            NSApp.terminate(nil)
-        }
-        source.resume()
-        sigtermSource = source
-    }
 }
 
 @main
@@ -192,8 +164,8 @@ struct ScreenStoreApp: App {
                     return
                 }
                 appLog.info("smoke-window picking: app=\(target.appName, privacy: .public) title=\(target.title, privacy: .public) id=\(target.id, privacy: .public)")
-                let item = try await CaptureService.shared.captureWindow(id: target.id)
-                appLog.info("smoke-window OK: \(item.fileURL.path, privacy: .public) \(Int(item.pixelSize.width), privacy: .public)x\(Int(item.pixelSize.height), privacy: .public)")
+                let output = try await CaptureService.shared.captureWindow(id: target.id)
+                appLog.info("smoke-window OK: \(output.item.fileURL.path, privacy: .public) \(Int(output.item.pixelSize.width), privacy: .public)x\(Int(output.item.pixelSize.height), privacy: .public)")
             } catch {
                 appLog.error("smoke-window FAILED: \(String(describing: error), privacy: .public)")
             }
