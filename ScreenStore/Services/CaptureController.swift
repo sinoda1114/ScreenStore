@@ -135,6 +135,12 @@ final class CaptureController: ObservableObject {
         }
     }
 
+    /// 通常終了時に録画ファイルを確定してからアプリを閉じるための終了フック。
+    func stopActiveRecordingForTermination() async {
+        guard isRecording else { return }
+        await stopRegionRecording()
+    }
+
     private func startRegionRecording() async {
         guard !isCapturing, !isRecording else { return }
         isCapturing = true

@@ -3,6 +3,12 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import ScreenCaptureKit
+import os.log
+
+private let screenRecordingLog = Logger(
+    subsystem: "com.sinoda.ScreenStore",
+    category: "screen-recording"
+)
 
 enum ScreenRecordingError: LocalizedError {
     case alreadyRecording
@@ -251,10 +257,15 @@ final class ScreenRecordingService: NSObject, SCStreamOutput, SCStreamDelegate, 
 
                 videoInput.markAsFinished()
                 writer.finishWriting {
-                    if let streamError {
-                        continuation.resume(throwing: streamError)
-                    } else if writer.status == .completed {
+                    if writer.status == .completed {
+                        if let streamError {
+                            screenRecordingLog.warning(
+                                "recording finalized after stream warning: \(String(describing: streamError), privacy: .private)"
+                            )
+                        }
                         continuation.resume()
+                    } else if let streamError {
+                        continuation.resume(throwing: streamError)
                     } else {
                         let message = writer.error?.localizedDescription
                             ?? String(localized: "error.unknown")

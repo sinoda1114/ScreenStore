@@ -6,7 +6,11 @@ import os.log
 private let appLog = Logger(subsystem: "com.sinoda.ScreenStore", category: "app")
 
 /// アプリの起動/終了タイミングに対するフックを担当する。
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var captureController: CaptureController?
+    private var terminationTask: Task<Void, Never>?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.main.async {
             self.configureMainWindows()
@@ -31,6 +35,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // メインウィンドウが破棄済みなら true を返して WindowGroup に再生成させる。
         return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard captureController?.isRecording == true else {
+            return .terminateNow
+        }
+        guard terminationTask == nil else {
+            return .terminateLater
+        }
+
+        terminationTask = Task { @MainActor [weak self, weak captureController] in
+            await captureController?.stopActiveRecordingForTermination()
+            self?.terminationTask = nil
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     private func configureMainWindows() {
@@ -83,6 +103,7 @@ struct ScreenStoreApp: App {
                     // env オブジェクトが揃ったこのタイミングで共有コントローラを構成し、
                     // 起動時に常時最前面のフローティングパレットを表示する。
                     captureController.configure(historyStore: historyStore, permission: permission)
+                    appDelegate.captureController = captureController
                     CapturePaletteController.shared.show(capture: captureController, shortcuts: shortcuts)
                 }
         }
