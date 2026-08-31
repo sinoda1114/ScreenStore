@@ -49,7 +49,8 @@ final class CapturePaletteController {
         hosting.layoutSubtreeIfNeeded()
         var contentSize = hosting.fittingSize
         if contentSize.width < 100 || contentSize.height < 30 {
-            contentSize = NSSize(width: 420, height: 72)
+            let scale = currentPaletteScale
+            contentSize = NSSize(width: 280 * scale, height: 40 * scale)
         }
         hosting.frame = NSRect(origin: .zero, size: contentSize)
         hosting.translatesAutoresizingMaskIntoConstraints = true
@@ -99,6 +100,14 @@ final class CapturePaletteController {
     func showIfConfigured() {
         guard let configuredCapture, let configuredShortcuts else { return }
         show(capture: configuredCapture, shortcuts: configuredShortcuts)
+    }
+
+    /// 設定画面のスライダー変更後に、現在表示中のパネルを新しい自然サイズへ追従させる。
+    func refreshSize() {
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.resizePanelToFit()
+        }
     }
 
     func showCountdown(_ remaining: Int) {
@@ -163,6 +172,34 @@ final class CapturePaletteController {
         let x = visible.midX - size.width / 2
         let y = visible.minY + yOffset
         panel.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
+    }
+
+    private var currentPaletteScale: CGFloat {
+        let defaults = UserDefaults.standard
+        let stored = defaults.object(forKey: AppPreferenceKeys.capturePaletteScale) as? Double
+            ?? AppPreferenceKeys.defaultCapturePaletteScale
+        return CGFloat(min(
+            max(stored, AppPreferenceKeys.minimumCapturePaletteScale),
+            AppPreferenceKeys.maximumCapturePaletteScale
+        ))
+    }
+
+    private func resizePanelToFit() {
+        guard let panel, let hosting = panel.contentView else { return }
+
+        let centerX = panel.frame.midX
+        let minY = panel.frame.minY
+        hosting.invalidateIntrinsicContentSize()
+        hosting.needsLayout = true
+        hosting.layoutSubtreeIfNeeded()
+
+        let contentSize = hosting.fittingSize
+        guard contentSize.width >= 100, contentSize.height >= 20 else { return }
+
+        panel.setContentSize(contentSize)
+        hosting.frame = NSRect(origin: .zero, size: contentSize)
+        panel.setFrameOrigin(NSPoint(x: centerX - panel.frame.width / 2, y: minY))
+        paletteLog.info("capture palette resized frame=\(NSStringFromRect(panel.frame), privacy: .public)")
     }
 
 }

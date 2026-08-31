@@ -26,6 +26,8 @@ private struct GeneralSettingsView: View {
     @State private var savePath: String = StorageService.shared.imagesDirectory.path
     @AppStorage(AppPreferenceKeys.capturePaletteBackgroundOpacity)
     private var paletteBackgroundOpacity = AppPreferenceKeys.defaultCapturePaletteBackgroundOpacity
+    @AppStorage(AppPreferenceKeys.capturePaletteScale)
+    private var paletteScale = AppPreferenceKeys.defaultCapturePaletteScale
 
     var body: some View {
         Form {
@@ -49,7 +51,7 @@ private struct GeneralSettingsView: View {
             }
 
             Section {
-                LabeledContent("フローティングパレット") {
+                LabeledContent("透明度") {
                     HStack(spacing: 10) {
                         Slider(
                             value: Binding(
@@ -67,16 +69,48 @@ private struct GeneralSettingsView: View {
                             .frame(width: 42, alignment: .trailing)
                     }
                 }
+
+                LabeledContent("パレットサイズ") {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: paletteScaleBinding,
+                            in: paletteScaleRange,
+                            step: 0.05
+                        )
+                        .frame(width: 180)
+
+                        Text("\(Int((paletteScale * 100).rounded()))%")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                }
             } header: {
-                Text("表示")
+                Text("フローティングパレット表示")
             } footer: {
-                Text("数値を下げるほど背景が透けます。アイコンと文字は読みやすさを優先して濃く表示します。")
+                Text("背景の透明度とパレット全体の大きさを調整できます。変更はすぐに反映されます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding(20)
+    }
+
+    private var paletteScaleBinding: Binding<Double> {
+        Binding(
+            get: { paletteScale },
+            set: { newValue in
+                paletteScale = min(
+                    max(newValue, AppPreferenceKeys.minimumCapturePaletteScale),
+                    AppPreferenceKeys.maximumCapturePaletteScale
+                )
+            }
+        )
+    }
+
+    private var paletteScaleRange: ClosedRange<Double> {
+        AppPreferenceKeys.minimumCapturePaletteScale...AppPreferenceKeys.maximumCapturePaletteScale
     }
 
     private func openSaveFolder() {
@@ -96,7 +130,7 @@ private struct ShortcutSettingsTab: View {
             Section {
                 ShortcutRow(label: "全画面キャプチャ", key: .fullScreen)
                 ShortcutRow(label: "ウィンドウキャプチャ", key: .window)
-                ShortcutRow(label: "範囲キャプチャ", key: .region)
+                ShortcutRow(label: "切抜キャプチャ", key: .region)
             } footer: {
                 Text("欄をクリックして任意のキー組み合わせを入力してください。Esc で取消、「既定」ボタンで初期値に戻します。Cmd+Shift+数字などプロセス内で動くショートカットのみ対応 (グローバルホットキーは Sprint 4 以降)。")
                     .font(.caption)
