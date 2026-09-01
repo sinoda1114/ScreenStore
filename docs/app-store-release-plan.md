@@ -12,7 +12,7 @@ ScreenStore を無料の macOS アプリとして Mac App Store で検索・イ�
 - `ScreenStore/ScreenStoreApp.swift`: 他アプリの設定変更を廃止
 - `ScreenStore/Services/CaptureController.swift`: 新しいウインドウ撮影・範囲録画フローへの接続
 - `ScreenStore/Services/CaptureService.swift`: ScreenCaptureKit による撮影処理
-- `ScreenStore/Services/WindowSelectionController.swift`: ウインドウ選択UI
+- `ScreenStore/Services/WindowSelectionController.swift`: ScreenCaptureKitを使った直接クリック型ウインドウ選択オーバーレイ
 - `ScreenStore/Services/ScreenRecordingService.swift`: ScreenCaptureKit と AVFoundation による録画
 - `ScreenStore/Services/VideoSpeedExportService.swift`: 外部 `ffmpeg` 依存の廃止
 - `ScreenStore/Localizable.xcstrings`: 日本語・英語の表示文言
@@ -24,7 +24,7 @@ ScreenStore を無料の macOS アプリとして Mac App Store で検索・イ�
 
 1. 公開用ブランチと本計画を作成する。— 検証: `git status` で既存の未追跡ファイルが混入していないことを確認する。
 2. App Sandbox と Hardened Runtime を有効化し、Pictures とユーザー選択ファイルへの最小権限を設定する。他アプリの設定変更と Homebrew `ffmpeg` 参照を廃止し、プライバシーマニフェストを追加する。— 検証: Debug/Release のビルド設定、署名済みアプリの entitlements、単体テストを確認する。
-3. `/usr/sbin/screencapture -W` を廃止し、アプリ内のウインドウ選択UIと ScreenCaptureKit 撮影に置き換える。— 検証: 複数アプリのウインドウ一覧、キャンセル、保存、クリップボードを手動確認する。
+3. `/usr/sbin/screencapture -W` を廃止し、ScreenCaptureKitとAppKitによる直接クリック型の単一ウインドウ撮影へ置き換える。外部コマンド、Accessibility API、private APIは使わない。— 検証: 複数画面でのホバー表示、クリック選択、Esc・右クリックのキャンセル、PNG保存、履歴追加、クリップボードを手動確認する。
 4. `/usr/sbin/screencapture -v` を廃止し、ScreenCaptureKit と AVFoundation による範囲録画に置き換える。— 検証: 開始・停止・キャンセル、複数ディスプレイ、音声なし動画、速度変更書き出しを確認する。
 5. SwiftUI とエラー表示を日本語・英語へローカライズする。— 検証: macOS の優先言語を日本語・英語に切り替え、主要画面と権限ダイアログを確認する。
 6. App Store Connect 用の掲載文、プライバシーポリシー、サポートページ、審査メモ、スクリーンショット構成を作る。— 検証: URL、連絡先、機能説明、データ収集なしの申告がアプリの実装と一致することを確認する。

@@ -85,12 +85,11 @@ final class CaptureController: ObservableObject {
         guard await ensurePermission() else { return }
 
         do {
-            let windows = try await CaptureService.shared.listCapturableWindows()
-            guard let selected = await WindowSelectionController.shared.selectWindow(from: windows) else {
+            guard let filter = try await WindowSelectionController.shared.selectWindow() else {
                 captureControllerLog.info("window capture cancelled by user")
                 return
             }
-            let output = try await CaptureService.shared.captureWindow(id: selected.id)
+            let output = try await CaptureService.shared.captureWindow(contentFilter: filter)
             finishCapture(output, kind: "captureWindow")
         } catch {
             handle(error: error)

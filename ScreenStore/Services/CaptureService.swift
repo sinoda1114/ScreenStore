@@ -156,6 +156,16 @@ final class CaptureService {
 
     // MARK: - Window capture
 
+    /// 画面上の直接選択オーバーレイが返したフィルターを使い、選択されたウインドウをそのまま撮影する。
+    func captureWindow(contentFilter filter: SCContentFilter) async throws -> CaptureOutput {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw CaptureError.permissionDenied
+        }
+
+        let cgImage = try await captureWindowImage(using: filter)
+        return try makeWindowCaptureOutput(from: cgImage)
+    }
+
     /// 指定 windowID のウィンドウだけを SCK でキャプチャする。
     /// SCContentFilter(desktopIndependentWindow:) を使うので、ウィンドウが画面上で
     /// 他に隠されていても直接コンテンツを取得できる (ScreenStore のウィンドウを隠す必要はない)。
@@ -178,8 +188,13 @@ final class CaptureService {
             throw CaptureError.windowNotFound
         }
 
-        let cgImage = try await captureImage(of: window)
+        let cgImage = try await captureWindowImage(
+            using: SCContentFilter(desktopIndependentWindow: window)
+        )
+        return try makeWindowCaptureOutput(from: cgImage)
+    }
 
+    private func makeWindowCaptureOutput(from cgImage: CGImage) throws -> CaptureOutput {
         let pngData = try StorageService.shared.encodePNGData(cgImage)
         let url = StorageService.shared.nextImageURL()
         try StorageService.shared.writePNGData(pngData, to: url)
@@ -335,11 +350,9 @@ final class CaptureService {
         }
     }
 
-    /// SCWindow 用。SCContentFilter(desktopIndependentWindow:) が提供する
+    /// 単一ウインドウ用。SCContentFilter が提供する
     /// `pointPixelScale` と `contentRect` を使って Retina 解像度のままキャプチャする。
-    private func captureImage(of window: SCWindow) async throws -> CGImage {
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-
+    private func captureWindowImage(using filter: SCContentFilter) async throws -> CGImage {
         let scale = CGFloat(filter.pointPixelScale)
         let widthPts = filter.contentRect.width
         let heightPts = filter.contentRect.height
