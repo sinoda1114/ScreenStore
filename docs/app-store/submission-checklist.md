@@ -2,12 +2,12 @@
 
 ## Apple Developer / App Store Connect
 
-- [ ] Apple Developer Program の有効化メールを確認
-- [ ] Xcodeの「Accounts」でTeamが表示されることを確認
+- [x] Apple Developer Program の有効化メールを確認
+- [x] Xcodeの「Accounts」でTeamが表示されることを確認
 - [ ] App Store Connectの契約・税金・口座情報を確認（無料アプリのみなら口座情報は通常不要）
-- [ ] Bundle ID `com.sinoda.ScreenStore` をIdentifiersへ登録
-- [ ] App Store ConnectでmacOSアプリを新規作成し、アプリ名の空きを確認
-- [ ] SKUを決定（例: `screenstore-macos-001`）
+- [x] Bundle ID `com.sinoda.ScreenStore` をIdentifiersへ登録
+- [x] App Store ConnectでmacOSアプリを新規作成し、アプリ名の空きを確認
+- [x] SKUを決定（例: `screenstore-macos-001`）
 
 ## コードと署名
 
@@ -17,7 +17,7 @@
 - [x] 外部`screencapture`依存を廃止
 - [x] 他アプリの設定変更を廃止
 - [x] プライバシーマニフェストを追加
-- [ ] Team IDをXcodeで選択
+- [x] Team IDをXcodeで選択
 - [ ] Release Archiveを作成
 - [ ] Archiveからプライバシーレポートを生成・確認
 - [ ] Validate Appを実行
@@ -27,10 +27,10 @@
 - [x] 日本語・英語の説明文
 - [x] プライバシーポリシー原稿
 - [x] サポートページ原稿
-- [ ] GitHub Pagesを有効化して公開URLを確認
+- [x] GitHub Pagesを有効化して公開URLを確認
 - [ ] 日本語・英語のスクリーンショットを作成
-- [ ] App Privacyを「データ収集なし」で回答
-- [ ] 年齢制限、カテゴリ、著作権表記を登録
+- [x] App Privacyを「データ収集なし」で回答
+- [x] 年齢制限、カテゴリ、著作権表記を登録
 
 ## 最終確認
 

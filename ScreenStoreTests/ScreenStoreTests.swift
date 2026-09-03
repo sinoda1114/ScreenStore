@@ -46,6 +46,68 @@ private func writeOnePixelPNG(_ url: URL, width: Int = 4, height: Int = 4) throw
     }
 }
 
+// MARK: - Window selection geometry
+
+@Suite("WindowSelectionGeometry")
+struct WindowSelectionGeometryTests {
+    @Test("ScreenCaptureKitの上端原点座標をAppKit座標へ変換する")
+    func convertsFrameToAppKitCoordinates() {
+        let frame = CGRect(x: 100, y: 200, width: 300, height: 400)
+        let converted = WindowSelectionGeometry.appKitFrame(
+            fromScreenCaptureFrame: frame,
+            primaryScreenMaxY: 1_080
+        )
+
+        #expect(converted == CGRect(x: 100, y: 480, width: 300, height: 400))
+    }
+
+    @Test("メイン画面より上のディスプレイを負のY座標から変換する")
+    func convertsDisplayAbovePrimaryScreen() {
+        let frame = CGRect(x: 0, y: -900, width: 1_440, height: 900)
+        let converted = WindowSelectionGeometry.appKitFrame(
+            fromScreenCaptureFrame: frame,
+            primaryScreenMaxY: 1_080
+        )
+
+        #expect(converted == CGRect(x: 0, y: 1_080, width: 1_440, height: 900))
+    }
+
+    @Test("メイン画面の左下にあるディスプレイの座標を変換する")
+    func convertsDisplayLeftAndBelowPrimaryScreen() {
+        let frame = CGRect(x: -1_920, y: 1_080, width: 1_920, height: 1_080)
+        let converted = WindowSelectionGeometry.appKitFrame(
+            fromScreenCaptureFrame: frame,
+            primaryScreenMaxY: 1_080
+        )
+
+        #expect(converted == CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080))
+    }
+
+    @Test("重なったウインドウでは前面のIDを選ぶ")
+    func picksFrontmostWindowAtPoint() {
+        let frames: [CGWindowID: CGRect] = [
+            10: CGRect(x: 0, y: 0, width: 300, height: 300),
+            20: CGRect(x: 100, y: 100, width: 300, height: 300)
+        ]
+
+        #expect(WindowSelectionGeometry.topmostWindowID(
+            at: CGPoint(x: 150, y: 150),
+            orderedWindowIDs: [20, 10],
+            framesByWindowID: frames
+        ) == 20)
+        #expect(WindowSelectionGeometry.topmostWindowID(
+            at: CGPoint(x: 50, y: 50),
+            orderedWindowIDs: [20, 10],
+            framesByWindowID: frames
+        ) == 10)
+        #expect(WindowSelectionGeometry.topmostWindowID(
+            at: CGPoint(x: 500, y: 500),
+            orderedWindowIDs: [20, 10],
+            framesByWindowID: frames
+        ) == nil)
+    }
+}
+
 // MARK: - App Store resources
 
 @Suite("App Store Resources")

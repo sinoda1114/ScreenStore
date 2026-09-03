@@ -33,12 +33,6 @@
 "パレットを閉じる" = "Close Palette";
 "ドラッグして移動" = "Drag to Move";
 "キャプチャに失敗しました" = "Capture Failed";
-"撮影するウインドウを選択" = "Choose a Window to Capture";
-"アプリ名またはウインドウ名で検索できます。" = "Search by app name or window title.";
-"ウインドウを検索" = "Search Windows";
-"%lld件" = "%lld windows";
-"撮影" = "Capture";
-"キャンセル" = "Cancel";
 "OK" = "OK";
 "エラー" = "Error";
 "履歴なし" = "No History";
@@ -102,6 +96,7 @@
 "pasteboard.error.no_image" = "No image was found on the clipboard.";
 "pasteboard.error.conversion_failed" = "The clipboard data could not be converted to PNG.";
 "region.selection_hint" = "Drag to select a region / Esc to cancel";
+"window.selection_hint" = "Point at a window and click / Esc or right-click to cancel";
 "shortcut.press_keys" = "Press keys…";
 "editor.error.load_image" = "The image could not be loaded for editing.\n%@";
 "editor.error.render_annotations" = "The annotations could not be rendered.";
