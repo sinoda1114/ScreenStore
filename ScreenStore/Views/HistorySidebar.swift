@@ -13,6 +13,7 @@ struct HistorySidebar: View {
 
     @State private var pasteErrorMessage: String?
     @State private var showPasteError = false
+    @State private var selectionAnchorID: CaptureItem.ID?
 
     var body: some View {
         Group {
@@ -23,11 +24,13 @@ struct HistorySidebar: View {
                     description: Text("ツールバーから全画面キャプチャを実行すると履歴に追加されます。")
                 )
             } else {
-                // List(selection:) に Set 型 Binding を渡すと自動でマルチセレクト対応 (Shift / Cmd 選択) になる。
+                // 行は List が、サムネイルは select(_:modifiers:) が選択を処理する。
                 List(selection: $selectedIDs) {
                     ForEach(historyStore.items) { item in
-                        HistoryRow(item: item)
-                            .tag(item.id)
+                        HistoryRow(item: item) { modifiers in
+                            select(item, modifiers: modifiers)
+                        }
+                        .tag(item.id)
                     }
                 }
                 .listStyle(.sidebar)
@@ -51,6 +54,29 @@ struct HistorySidebar: View {
             Button("OK", role: .cancel) {}
         } message: { msg in
             Text(msg)
+        }
+    }
+
+    private func select(_ item: CaptureItem, modifiers: NSEvent.ModifierFlags) {
+        if modifiers.contains(.shift) {
+            let ids = historyStore.items.map(\.id)
+            let anchor = selectionAnchorID.flatMap { selectedIDs.contains($0) && ids.contains($0) ? $0 : nil }
+                ?? ids.first(where: { selectedIDs.contains($0) })
+                ?? item.id
+            guard let start = ids.firstIndex(of: anchor),
+                  let end = ids.firstIndex(of: item.id) else { return }
+            let range = Set(ids[min(start, end)...max(start, end)])
+            selectedIDs = modifiers.contains(.command) ? selectedIDs.union(range) : range
+        } else if modifiers.contains(.command) {
+            if selectedIDs.contains(item.id) {
+                selectedIDs.remove(item.id)
+            } else {
+                selectedIDs.insert(item.id)
+            }
+            selectionAnchorID = item.id
+        } else {
+            selectedIDs = [item.id]
+            selectionAnchorID = item.id
         }
     }
 
@@ -180,6 +206,7 @@ struct HistorySidebar: View {
 
 private struct HistoryRow: View {
     let item: CaptureItem
+    let select: (NSEvent.ModifierFlags) -> Void
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -197,10 +224,11 @@ private struct HistoryRow: View {
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
                 )
-                // ドラッグはサムネ領域だけで受け付ける。
-                // 行全体に .onDrag を付けると SwiftUI が「クリック or ドラッグ」を判定するまで
-                // 選択ハイライトが遅延するため、選択感を犠牲にしないよう範囲を絞る。
-                .onDrag { dragProvider(for: item) }
+                .onTapGesture {
+                    select(NSEvent.modifierFlags)
+                }
+                .onDrag { HistoryDragProvider.make(for: item) }
+                .help("ドラッグしてファイルを渡す")
             VStack(alignment: .leading, spacing: 2) {
                 Text(formattedDate)
                     .font(.subheadline)
@@ -208,7 +236,6 @@ private struct HistoryRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
@@ -219,21 +246,24 @@ private struct HistoryRow: View {
     }
 }
 
-/// 行を外部アプリへドラッグするための NSItemProvider を生成する。
-/// PNG のファイル URL 表現を public.png として登録することで、
-/// Finder / Chrome / Cursor / メーラーいずれでも素直に「画像ファイル」として受け取れる。
-private func dragProvider(for item: CaptureItem) -> NSItemProvider {
-    let provider = NSItemProvider()
-    provider.suggestedName = item.fileURL.deletingPathExtension().lastPathComponent
-    provider.registerFileRepresentation(
-        forTypeIdentifier: item.isVideo ? UTType.movie.identifier : UTType.png.identifier,
-        fileOptions: [],
-        visibility: .all
-    ) { completion in
-        completion(item.fileURL, true, nil)
-        return nil
+enum HistoryDragProvider {
+    static func make(for item: CaptureItem) -> NSItemProvider {
+        sidebarLog.info("sidebar file drag started")
+        // ブラウザのアップロード欄へ渡すため、ファイル URL と実ファイル表現の両方を提供する。
+        let provider = NSItemProvider(object: item.fileURL as NSURL)
+        provider.suggestedName = item.fileURL.lastPathComponent
+        let contentType = UTType(filenameExtension: item.fileURL.pathExtension)
+            ?? (item.isVideo ? .movie : .image)
+        provider.registerFileRepresentation(
+            forTypeIdentifier: contentType.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(item.fileURL, true, nil)
+            return nil
+        }
+        return provider
     }
-    return provider
 }
 
 private struct ThumbnailView: View {

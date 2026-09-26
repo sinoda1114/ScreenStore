@@ -207,6 +207,13 @@ final class ScreenRecordingService: NSObject, SCStreamOutput, SCStreamDelegate, 
         guard outputType == .screen,
               sampleBuffer.isValid,
               CMSampleBufferDataIsReady(sampleBuffer),
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                  sampleBuffer,
+                  createIfNecessary: false
+              ) as? [[SCStreamFrameInfo: Any]],
+              let statusRawValue = attachments.first?[SCStreamFrameInfo.status] as? Int,
+              SCFrameStatus(rawValue: statusRawValue) == .complete,
+              CMSampleBufferGetImageBuffer(sampleBuffer) != nil,
               let writer,
               let videoInput else { return }
 
@@ -224,6 +231,9 @@ final class ScreenRecordingService: NSObject, SCStreamOutput, SCStreamDelegate, 
         if !videoInput.append(sampleBuffer), streamError == nil {
             streamError = writer.error
                 ?? ScreenRecordingError.writerFailed(String(localized: "recording.error.cannot_append_frame"))
+            screenRecordingLog.error(
+                "could not append complete frame: \(String(describing: self.streamError), privacy: .public)"
+            )
         }
     }
 
