@@ -177,6 +177,60 @@ struct CaptureItemTests {
     }
 }
 
+@Suite("HistoryDragProvider")
+struct HistoryDragProviderTests {
+    @Test("ドラッグした画像ファイルの内容を受け取れる")
+    func providesFileContents() async throws {
+        let base = makeTempBaseDir()
+        defer { cleanup(base) }
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let fileURL = base.appendingPathComponent("capture.png")
+        try writeOnePixelPNG(fileURL)
+        let expected = try Data(contentsOf: fileURL)
+        let item = CaptureItem(
+            fileURL: fileURL,
+            pixelSize: CGSize(width: 4, height: 4),
+            captureMode: .full,
+            mediaKind: .image
+        )
+
+        let provider = HistoryDragProvider.make(for: item)
+        let received: Data? = await withCheckedContinuation { continuation in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.png.identifier) { url, _ in
+                continuation.resume(returning: url.flatMap { try? Data(contentsOf: $0) })
+            }
+        }
+        #expect(received == expected)
+    }
+
+    @Test("履歴の画像と動画は実ファイルURLと正しい形式を渡す", arguments: [
+        ("capture.png", UTType.png),
+        ("edited.jpeg", UTType.jpeg),
+        ("recording.mov", UTType.quickTimeMovie)
+    ])
+    func providesFileURLAndContentType(filename: String, contentType: UTType) async {
+        let isVideo = contentType == .quickTimeMovie
+        let item = CaptureItem(
+            fileURL: URL(fileURLWithPath: "/tmp/\(filename)"),
+            pixelSize: CGSize(width: 100, height: 100),
+            captureMode: isVideo ? .regionRecording : .full,
+            mediaKind: isVideo ? .video : .image
+        )
+
+        let provider = HistoryDragProvider.make(for: item)
+        #expect(provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier))
+        #expect(provider.hasItemConformingToTypeIdentifier(contentType.identifier))
+        #expect(provider.suggestedName == filename)
+
+        let draggedURL: URL? = await withCheckedContinuation { continuation in
+            _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+                continuation.resume(returning: object as? URL)
+            }
+        }
+        #expect(draggedURL == item.fileURL)
+    }
+}
+
 // MARK: - StorageService
 
 @Suite("StorageService")
